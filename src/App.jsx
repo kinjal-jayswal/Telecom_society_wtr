@@ -1238,6 +1238,16 @@ export default function App() {
                           Upload XLS, XLSX, CSV, or Text-formatted PDF sheets to insert or update member accounts. The parser maps columns: `staff_no`, `name`, `year`, `month`, `savings_deposit`, `loan_recovery`, `interest_recovery`.
                         </p>
 
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '16px', background: 'rgba(0,0,0,0.02)', border: '1px solid var(--surface-border)', borderRadius: '8px', padding: '10px 14px' }}>
+                          <span style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>Not sure of the format?</span>
+                          <a href="/api/upload-data/template?format=csv" download style={{ fontSize: '12px', fontWeight: '600', color: 'var(--primary)', display: 'inline-flex', alignItems: 'center', gap: '4px', textDecoration: 'none' }}>
+                            <Download size={12} /> CSV Template
+                          </a>
+                          <a href="/api/upload-data/template?format=xlsx" download style={{ fontSize: '12px', fontWeight: '600', color: 'var(--primary)', display: 'inline-flex', alignItems: 'center', gap: '4px', textDecoration: 'none' }}>
+                            <Download size={12} /> XLSX Template
+                          </a>
+                        </div>
+
                         <form onSubmit={handleFileUpload} style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
                           <div style={{ border: '2px dashed var(--surface-border)', padding: '24px', borderRadius: '8px', textAlign: 'center', cursor: 'pointer', background: 'rgba(0,0,0,0.01)' }} onClick={() => document.getElementById('file-upload-input').click()}>
                             <FileText size={32} style={{ color: 'var(--text-secondary)', marginBottom: '8px', opacity: 0.6 }} />

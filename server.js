@@ -265,6 +265,30 @@ app.delete('/api/board/:id', async (req, res) => {
   }
 });
 
+// Downloadable blank template (CSV or XLSX) with the exact column headers
+// the parsers/importRecords() expect, so admins don't have to guess the format.
+const TEMPLATE_HEADERS = ['staff_no', 'name', 'year', 'month', 'savings_deposit', 'loan_recovery', 'interest_recovery'];
+const TEMPLATE_EXAMPLE_ROW = ['1001', 'Mahendrakumar Solanki', '2026', '07', '2500', '8000', '2000'];
+
+app.get('/api/upload-data/template', (req, res) => {
+  const format = (req.query.format || 'csv').toLowerCase();
+
+  if (format === 'xlsx') {
+    const worksheet = xlsx.utils.aoa_to_sheet([TEMPLATE_HEADERS, TEMPLATE_EXAMPLE_ROW]);
+    const workbook = xlsx.utils.book_new();
+    xlsx.utils.book_append_sheet(workbook, worksheet, 'Template');
+    const buffer = xlsx.write(workbook, { type: 'buffer', bookType: 'xlsx' });
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', 'attachment; filename=society_upload_template.xlsx');
+    return res.send(buffer);
+  }
+
+  const csvText = [TEMPLATE_HEADERS, TEMPLATE_EXAMPLE_ROW].map((row) => row.join(',')).join('\n');
+  res.setHeader('Content-Type', 'text/csv');
+  res.setHeader('Content-Disposition', 'attachment; filename=society_upload_template.csv');
+  res.send(csvText);
+});
+
 // 8. Upload Account Data (Admin Portal)
 app.post('/api/upload-data', upload.single('file'), async (req, res) => {
   if (!req.file) {
