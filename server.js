@@ -16,8 +16,9 @@ import {
   saveSettings, 
   getSettings, 
   getBoardMembers, 
-  saveBoardMember, 
-  deleteBoardMember, 
+  saveBoardMember,
+  getBoardMemberById,
+  deleteBoardMember,
   getBackups, 
   getFullState, 
   importRecords, 
@@ -50,6 +51,21 @@ const storage = multer.diskStorage({
   }
 });
 const upload = multer({ storage });
+
+// Board member photos are stored inline as base64 data URIs in the DB (no
+// persistent volume is mounted for the app service), so they use in-memory
+// storage instead of the disk storage above.
+const boardPhotoUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 2 * 1024 * 1024 },
+  fileFilter: (req, file, cb) => {
+    if (file.mimetype.startsWith('image/')) {
+      cb(null, true);
+    } else {
+      cb(new Error('Only image files are allowed for board member photos.'));
+    }
+  }
+});
 
 // Initialize database and start scheduler
 initDatabase()
@@ -184,24 +200,32 @@ app.get('/api/board', async (req, res) => {
   }
 });
 
-app.post('/api/board', async (req, res) => {
+app.post('/api/board', boardPhotoUpload.single('photo'), async (req, res) => {
   const { name, role, initials, display_order } = req.body;
   if (!name || !role || !initials) {
     return res.status(400).json({ error: 'Name, Role and Initials are required.' });
   }
   try {
-    await saveBoardMember(name, role, initials, display_order || 0);
+    const photoUrl = req.file ? `data:${req.file.mimetype};base64,${req.file.buffer.toString('base64')}` : null;
+    await saveBoardMember(name, role, initials, display_order || 0, photoUrl);
     res.json({ message: 'Board member added successfully.' });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
 
-app.put('/api/board/:id', async (req, res) => {
+app.put('/api/board/:id', boardPhotoUpload.single('photo'), async (req, res) => {
   const { id } = req.params;
   const { name, role, initials, display_order } = req.body;
   try {
-    await saveBoardMember(name, role, initials, display_order || 0, id);
+    let photoUrl;
+    if (req.file) {
+      photoUrl = `data:${req.file.mimetype};base64,${req.file.buffer.toString('base64')}`;
+    } else {
+      const existing = await getBoardMemberById(id);
+      photoUrl = existing ? existing.photo_url : null;
+    }
+    await saveBoardMember(name, role, initials, display_order || 0, photoUrl, id);
     res.json({ message: 'Board member updated successfully.' });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -429,6 +453,12 @@ if (fs.existsSync(distPath)) {
     res.send('Backend Server is running. Frontend has not been built yet.');
   });
 }
+
+// Error handler (e.g. board photo upload rejected by boardPhotoUpload's fileFilter/limits)
+app.use((err, req, res, next) => {
+  console.log('Unhandled request error (logged):', err.message);
+  res.status(400).json({ error: err.message });
+});
 
 // Start Server
 app.listen(PORT, () => {

@@ -49,6 +49,8 @@ export default function App() {
   const [directorRole, setDirectorRole] = useState('');
   const [directorInitials, setDirectorInitials] = useState('');
   const [directorOrder, setDirectorOrder] = useState('0');
+  const [directorPhotoFile, setDirectorPhotoFile] = useState(null);
+  const [directorPhotoPreview, setDirectorPhotoPreview] = useState('');
   
   // Settings form editing state
   const [editSocietyName, setEditSocietyName] = useState('');
@@ -190,12 +192,14 @@ export default function App() {
     }
 
     try {
-      const payload = {
-        name: directorName,
-        role: directorRole,
-        initials: directorInitials,
-        display_order: parseInt(directorOrder) || 0
-      };
+      const formData = new FormData();
+      formData.append('name', directorName);
+      formData.append('role', directorRole);
+      formData.append('initials', directorInitials);
+      formData.append('display_order', parseInt(directorOrder) || 0);
+      if (directorPhotoFile) {
+        formData.append('photo', directorPhotoFile);
+      }
 
       let url = '/api/board';
       let method = 'POST';
@@ -205,11 +209,9 @@ export default function App() {
         method = 'PUT';
       }
 
-      const res = await fetch(url, {
-        method,
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
-      });
+      // No Content-Type header here — the browser sets the multipart
+      // boundary automatically when the body is a FormData instance.
+      const res = await fetch(url, { method, body: formData });
 
       const data = await res.json();
       if (res.ok) {
@@ -219,6 +221,8 @@ export default function App() {
         setDirectorRole('');
         setDirectorInitials('');
         setDirectorOrder('0');
+        setDirectorPhotoFile(null);
+        setDirectorPhotoPreview('');
         setEditingDirector(null);
         fetchBoardMembers();
       } else {
@@ -227,6 +231,28 @@ export default function App() {
     } catch (err) {
       setDirectorMessage('Network error saving director details.');
     }
+  };
+
+  // Populate the form to edit an existing board member (also handles
+  // the "Edit" button on the admin board list)
+  const startEditDirector = (director) => {
+    setEditingDirector(director);
+    setDirectorName(director.name);
+    setDirectorRole(director.role);
+    setDirectorInitials(director.initials);
+    setDirectorOrder(String(director.display_order ?? 0));
+    setDirectorPhotoFile(null);
+    setDirectorPhotoPreview(director.photo_url || '');
+    setDirectorMessage('');
+  };
+
+  const handleDirectorPhotoChange = (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    setDirectorPhotoFile(file);
+    const reader = new FileReader();
+    reader.onload = () => setDirectorPhotoPreview(reader.result);
+    reader.readAsDataURL(file);
   };
 
   // Delete Board Member
@@ -766,8 +792,12 @@ export default function App() {
                 ) : (
                   boardMembers.map((b) => (
                     <div key={b.id} style={{ textAlign: 'center', background: 'rgba(0,0,0,0.02)', padding: '16px', borderRadius: '12px', border: '1px solid var(--surface-border)', transition: 'all 0.2s' }}>
-                      <div style={{ width: '80px', height: '80px', borderRadius: '50%', background: 'var(--primary)', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 12px auto', fontSize: '24px', fontWeight: '700', boxShadow: 'var(--glow-blue)' }}>
-                        {b.initials}
+                      <div style={{ width: '80px', height: '80px', borderRadius: '50%', background: 'var(--primary)', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 12px auto', fontSize: '24px', fontWeight: '700', boxShadow: 'var(--glow-blue)', overflow: 'hidden' }}>
+                        {b.photo_url ? (
+                          <img src={b.photo_url} alt={b.name} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                        ) : (
+                          b.initials
+                        )}
                       </div>
                       <h4 style={{ fontSize: '15px' }}>{b.name}</h4>
                       <span style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>{b.role}</span>
@@ -1335,6 +1365,28 @@ export default function App() {
                             required
                           />
                         </div>
+                        <div>
+                          <label style={{ fontSize: '12px', color: 'var(--text-secondary)', display: 'block', marginBottom: '4px' }}>Photograph</label>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                            {directorPhotoPreview && (
+                              <img
+                                src={directorPhotoPreview}
+                                alt="Preview"
+                                style={{ width: '48px', height: '48px', borderRadius: '50%', objectFit: 'cover', border: '1px solid var(--surface-border)' }}
+                              />
+                            )}
+                            <input
+                              type="file"
+                              accept="image/*"
+                              className="form-input"
+                              onChange={handleDirectorPhotoChange}
+                              style={{ flex: 1 }}
+                            />
+                          </div>
+                          <span style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>
+                            Optional — falls back to the initials avatar below if no photo is set. Max 2MB.
+                          </span>
+                        </div>
                         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
                           <div>
                             <label style={{ fontSize: '12px', color: 'var(--text-secondary)', display: 'block', marginBottom: '4px' }}>Role / Designation</label>
@@ -1389,6 +1441,8 @@ export default function App() {
                                 setDirectorRole('');
                                 setDirectorInitials('');
                                 setDirectorOrder('0');
+                                setDirectorPhotoFile(null);
+                                setDirectorPhotoPreview('');
                               }}
                             >
                               Cancel
@@ -1407,11 +1461,20 @@ export default function App() {
                         ) : (
                           boardMembers.map((b) => (
                             <div key={b.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'rgba(0,0,0,0.01)', padding: '10px 14px', borderRadius: '8px', border: '1px solid var(--surface-border)' }}>
-                              <div>
-                                <strong style={{ fontSize: '13.5px' }}>{b.name}</strong>
-                                <span style={{ display: 'block', fontSize: '11px', color: 'var(--text-secondary)' }}>
-                                  {b.role} • Avatar: {b.initials} • Order: {b.display_order}
-                                </span>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                                <div style={{ width: '32px', height: '32px', borderRadius: '50%', background: 'var(--primary)', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '11px', fontWeight: '700', overflow: 'hidden', flexShrink: 0 }}>
+                                  {b.photo_url ? (
+                                    <img src={b.photo_url} alt={b.name} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                                  ) : (
+                                    b.initials
+                                  )}
+                                </div>
+                                <div>
+                                  <strong style={{ fontSize: '13.5px' }}>{b.name}</strong>
+                                  <span style={{ display: 'block', fontSize: '11px', color: 'var(--text-secondary)' }}>
+                                    {b.role} • Order: {b.display_order}
+                                  </span>
+                                </div>
                               </div>
                               <div style={{ display: 'flex', gap: '6px' }}>
                                 <button className="btn-secondary" style={{ padding: '4px 8px', fontSize: '11px' }} onClick={() => startEditDirector(b)}>

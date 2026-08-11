@@ -117,7 +117,8 @@ const SQLITE_SCHEMAS = [
     name TEXT NOT NULL,
     role TEXT NOT NULL,
     initials TEXT NOT NULL,
-    display_order INTEGER DEFAULT 0
+    display_order INTEGER DEFAULT 0,
+    photo_url TEXT
   )`,
   `CREATE TABLE IF NOT EXISTS settings (
     key TEXT UNIQUE NOT NULL,
@@ -169,7 +170,8 @@ const POSTGRES_SCHEMAS = [
     name VARCHAR(255) NOT NULL,
     role VARCHAR(255) NOT NULL,
     initials VARCHAR(10) NOT NULL,
-    display_order INTEGER DEFAULT 0
+    display_order INTEGER DEFAULT 0,
+    photo_url TEXT
   )`,
   `CREATE TABLE IF NOT EXISTS settings (
     key VARCHAR(255) UNIQUE NOT NULL,
@@ -183,7 +185,20 @@ export async function initDatabase() {
   for (const schema of schemas) {
     await run(schema);
   }
+  await runMigrations();
   await seedInitialData();
+}
+
+// Adds columns to tables that already existed before this column was introduced
+async function runMigrations() {
+  try {
+    const alterSql = isPostgres
+      ? "ALTER TABLE board_members ADD COLUMN IF NOT EXISTS photo_url TEXT"
+      : "ALTER TABLE board_members ADD COLUMN photo_url TEXT";
+    await run(alterSql);
+  } catch (err) {
+    // SQLite has no "ADD COLUMN IF NOT EXISTS" — ignore "duplicate column" on repeat runs
+  }
 }
 
 // Seed initial data for testing
@@ -286,12 +301,16 @@ export async function getBoardMembers() {
   return query("SELECT * FROM board_members ORDER BY display_order ASC");
 }
 
-export async function saveBoardMember(name, role, initials, displayOrder, id = null) {
+export async function saveBoardMember(name, role, initials, displayOrder, photoUrl = null, id = null) {
   if (id) {
-    return run("UPDATE board_members SET name = $1, role = $2, initials = $3, display_order = $4 WHERE id = $5", [name, role, initials, parseInt(displayOrder), id]);
+    return run("UPDATE board_members SET name = $1, role = $2, initials = $3, display_order = $4, photo_url = $5 WHERE id = $6", [name, role, initials, parseInt(displayOrder), photoUrl, id]);
   } else {
-    return run("INSERT INTO board_members (name, role, initials, display_order) VALUES ($1, $2, $3, $4)", [name, role, initials, parseInt(displayOrder)]);
+    return run("INSERT INTO board_members (name, role, initials, display_order, photo_url) VALUES ($1, $2, $3, $4, $5)", [name, role, initials, parseInt(displayOrder), photoUrl]);
   }
+}
+
+export async function getBoardMemberById(id) {
+  return get("SELECT * FROM board_members WHERE id = $1", [id]);
 }
 
 export async function deleteBoardMember(id) {
