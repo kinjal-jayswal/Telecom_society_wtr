@@ -1,0 +1,108 @@
+
+
+<!DOCTYPE html>
+
+<html lang="en">
+    <head>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
+        <meta http-equiv="x-ua-compatible" contnt="ie=edge">
+        <title>Receipt</title>
+        <link href="bootstrap-5.2.3/css/bootstrap.min.css" 
+              rel="stylesheet" 
+               
+              crossorigin="anonymous">
+
+        <!-- CSS -->
+        <style type="text/css">
+
+            html {
+                height: 90%;
+            }
+
+            body {
+                background: none;
+                height: 90%;
+            }
+            p {
+                color:white;
+
+            }
+            .btn {
+                background-color:#ffc451;
+            }
+            .btn:hover {
+                background-color:#ffd584;
+            }
+            .container {
+                text-align: center;
+                width: 200px;
+                border: 2px solid #ffc451;
+                padding: 10px;
+                border-radius: 25px
+            }
+
+            #logInForm {
+                display: none;
+            }
+
+            .toggleForms {
+                font-weight: bold;
+                color: white;
+            }
+
+            #homePageContainer {
+                margin-top: 10px;
+            }
+            
+            .container-fluid {
+                height: 100%;
+            }
+        </style> 
+    </head>
+
+    <body>
+        <div class="container" id="homePageContainer">
+            
+
+            <div id="error">
+                
+                            </div>
+
+            <!-- sign up form -->
+            
+
+
+
+
+
+                <p>Staff No./HRMS No.</p>
+                <form method="post" id="signUpForm">  
+                    <fieldset class="form-group">
+                    <input type="text" name="account" class="form-control" placeholder="Your Staff/ HRMS No.">
+                    </fieldset>            
+                    <br>
+                    <fieldset class="form-group">
+                    <p>Select Year : </p> 
+    					<select name="year" id="year" class="form-control">
+    						<option value="2026" selected>2026</option><option value="2025">2025</option><option value="2024">2024</option><option value="2023">2023</option><option value="2022">2022</option><option value="2021">2021</option>    					</select>
+                    </fieldset> 
+                    <br>
+                    
+                    <p>Select Month : </p> 
+                    <div class="dropdown">
+                        <select id="month" name="month" autocomplete='off' class="form-control">
+                        <option  value="01">January</option><option  value="02">February</option><option  value="03">March</option><option  value="04">April</option><option  value="05">May</option><option  value="06">June</option><option selected value="07">July</option><option  value="08">August</option><option  value="09">September</option><option  value="10">October</option><option  value="11">November</option><option  value="12">December</option>                        </select>
+                    </div>
+                    <br>
+                    <fieldset class="form-group">
+                        <input type="submit" id="submit" name="submit" class="btn" color= "#008CBA" value="Submit">
+                    </fieldset>
+    
+                </form>
+
+
+        </div>
+    
+    </body>
+</html>
