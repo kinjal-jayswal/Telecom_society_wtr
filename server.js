@@ -27,8 +27,9 @@ import {
   importRecords,
   isPostgres
 } from './database.js';
-import { performBackup, startBackupScheduler } from './backupService.js';
+import { performBackup, startBackupScheduler, isBucketConfigured, downloadFromBucket } from './backupService.js';
 import { isAIAvailable, getAIModel, aiExtractRecords, testAIConnection } from './aiParser.js';
+import { isEmailConfigured, testEmailConnection } from './emailService.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const uploadDir = join(__dirname, 'uploads');
@@ -144,17 +145,28 @@ app.post('/api/backups/run', async (req, res) => {
   }
 });
 
-// 6. Download Backup file
-app.get('/api/backups/download/:filename', (req, res) => {
+// 6. Download Backup file (local SQLite copy, falling back to the offsite bucket)
+app.get('/api/backups/download/:filename', async (req, res) => {
   const { filename } = req.params;
   const safeFilename = filename.replace(/\\|\//g, '');
   const filePath = join(backupsDir, safeFilename);
 
   if (fs.existsSync(filePath)) {
-    res.download(filePath);
-  } else {
-    res.status(404).json({ error: 'Backup file not found.' });
+    return res.download(filePath);
   }
+
+  try {
+    const buffer = await downloadFromBucket(safeFilename);
+    if (buffer) {
+      res.setHeader('Content-Type', 'application/json');
+      res.setHeader('Content-Disposition', `attachment; filename=${safeFilename}`);
+      return res.send(buffer);
+    }
+  } catch (err) {
+    console.error('Bucket download failed:', err.message);
+  }
+
+  res.status(404).json({ error: 'Backup file not found.' });
 });
 
 // 7. Full DB State JSON Export (Alternative backup method for PostgreSQL)
@@ -167,6 +179,21 @@ app.get('/api/backups/export', async (req, res) => {
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
+});
+
+// Whether the offsite backup destinations (bucket / email) are configured,
+// so the admin can see this without exposing any credentials.
+app.get('/api/backups/status', (req, res) => {
+  res.json({
+    bucketConfigured: isBucketConfigured(),
+    emailConfigured: isEmailConfigured()
+  });
+});
+
+// Verifies the SMTP credentials actually work (auth only, sends no mail).
+app.post('/api/backups/status/test-email', async (req, res) => {
+  const result = await testEmailConnection();
+  res.json(result);
 });
 
 // Restores a snapshot previously downloaded from /api/backups/export.

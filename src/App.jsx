@@ -91,6 +91,9 @@ export default function App() {
   const [backups, setBackups] = useState([]);
   const [backupLoading, setBackupLoading] = useState(false);
   const [backupMessage, setBackupMessage] = useState('');
+  const [offsiteStatus, setOffsiteStatus] = useState({ bucketConfigured: false, emailConfigured: false });
+  const [emailTestLoading, setEmailTestLoading] = useState(false);
+  const [emailTestResult, setEmailTestResult] = useState(null);
   const [restoreFile, setRestoreFile] = useState(null);
   const [restoreLoading, setRestoreLoading] = useState(false);
   const [restoreMessage, setRestoreMessage] = useState('');
@@ -125,6 +128,7 @@ export default function App() {
       fetchBackups();
       fetchMembers();
       fetchAIStatus();
+      fetchOffsiteStatus();
     }
   }, [adminLoggedIn]);
 
@@ -406,6 +410,31 @@ export default function App() {
       setRestoreMessage('Network error restoring backup.');
     } finally {
       setRestoreLoading(false);
+    }
+  };
+
+  // Offsite backup destinations (Railway bucket / email) — status + test
+  const fetchOffsiteStatus = async () => {
+    try {
+      const res = await fetch('/api/backups/status');
+      const data = await res.json();
+      if (res.ok) setOffsiteStatus(data);
+    } catch (err) {
+      console.error('Error fetching offsite backup status:', err);
+    }
+  };
+
+  const handleTestEmail = async () => {
+    setEmailTestLoading(true);
+    setEmailTestResult(null);
+    try {
+      const res = await fetch('/api/backups/status/test-email', { method: 'POST' });
+      const data = await res.json();
+      setEmailTestResult(data);
+    } catch (err) {
+      setEmailTestResult({ ok: false, error: 'Network error testing email connection.' });
+    } finally {
+      setEmailTestLoading(false);
     }
   };
 
@@ -1532,6 +1561,41 @@ export default function App() {
                       <p style={{ fontSize: '12px', color: 'var(--accent-gold)', marginBottom: '12px' }}>{backupMessage}</p>
                     )}
 
+                    <div style={{ marginBottom: '20px', background: 'rgba(0,0,0,0.02)', border: '1px solid var(--surface-border)', padding: '14px', borderRadius: '8px' }}>
+                      <strong style={{ fontSize: '13px', display: 'block', marginBottom: '10px' }}>Offsite Backup Destinations</strong>
+                      <p style={{ fontSize: '11px', color: 'var(--text-secondary)', marginBottom: '10px' }}>
+                        Every backup (fortnightly or manual) also uploads a JSON snapshot here — outside Railway's database, so it survives even if the Postgres database itself is lost.
+                      </p>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginBottom: '12px' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px' }}>
+                          <span style={{ color: 'var(--text-secondary)' }}>Railway Bucket</span>
+                          <span style={{ fontWeight: '600', color: offsiteStatus.bucketConfigured ? 'var(--secondary)' : 'var(--accent-red)' }}>
+                            {offsiteStatus.bucketConfigured ? 'Configured' : 'Not Configured'}
+                          </span>
+                        </div>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px' }}>
+                          <span style={{ color: 'var(--text-secondary)' }}>Email</span>
+                          <span style={{ fontWeight: '600', color: offsiteStatus.emailConfigured ? 'var(--secondary)' : 'var(--accent-red)' }}>
+                            {offsiteStatus.emailConfigured ? 'Configured' : 'Not Configured'}
+                          </span>
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        className="btn-secondary"
+                        style={{ fontSize: '12px', padding: '6px 12px' }}
+                        onClick={handleTestEmail}
+                        disabled={emailTestLoading}
+                      >
+                        {emailTestLoading ? 'Testing...' : 'Test Email Connection'}
+                      </button>
+                      {emailTestResult && (
+                        <p style={{ fontSize: '11px', marginTop: '8px', color: emailTestResult.ok ? 'var(--secondary)' : 'var(--accent-red)' }}>
+                          {emailTestResult.ok ? `Connection OK — backups will be emailed to ${emailTestResult.to}.` : (emailTestResult.error || 'Connection failed.')}
+                        </p>
+                      )}
+                    </div>
+
                     <div style={{ marginBottom: '20px', background: 'rgba(239, 68, 68, 0.05)', border: '1px solid rgba(239, 68, 68, 0.2)', padding: '14px', borderRadius: '8px' }}>
                       <strong style={{ fontSize: '13px', display: 'flex', alignItems: 'center', gap: '6px', color: 'var(--accent-red)', marginBottom: '6px' }}>
                         <AlertTriangle size={14} /> Restore from Backup File
@@ -1579,11 +1643,11 @@ export default function App() {
                                 {b.status}
                               </span>
                               {b.status === 'SUCCESS' && (
-                                <a 
-                                  href={b.filename.includes('postgres_cloud') ? `/api/backups/export` : `/api/backups/download/${b.filename}`}
-                                  className="btn-secondary" 
+                                <a
+                                  href={`/api/backups/download/${b.filename}`}
+                                  className="btn-secondary"
                                   style={{ padding: '4px', borderRadius: '4px' }}
-                                  title={b.filename.includes('postgres_cloud') ? "Download JSON Database Export" : "Download SQLite Database backup"}
+                                  title="Download this backup file"
                                   download
                                 >
                                   <Download size={12} />

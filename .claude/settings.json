@@ -2,7 +2,29 @@
   "permissions": {
     "allow": [
       "Skill(kinjalpush)",
-      "Skill(kinjalpush:*)"
+      "Skill(kinjalpush:*)",
+      "Bash(RAILWAY_CALLER=\"skill:use-railway@1.3.7\" railway bucket create society-backups --region sjc --project dcfa7f77-6429-4bf0-9b16-e9c5706ecc22 --environment production --json)",
+      "Bash(RAILWAY_CALLER=\"skill:use-railway@1.3.7\" railway bucket create society-backups --region sjc --json)",
+      "Bash(railway bucket *)",
+      "Bash(echo \"exit code: $?\")",
+      "Bash(node -e 'console.log\\('\\\\''fields:'\\\\'', Object.keys\\(JSON.parse\\(require\\('\\\\''fs'\\\\''\\).readFileSync\\('\\\\''C:/Users/jayan/AppData/Local/Temp/claude/c--Project-AI-Telecom-society-wtr/ffabed02-21a1-4f85-832d-5f7fdddf2c1b/scratchpad/bucket-creds.json'\\\\''\\)\\)\\)\\)')",
+      "Bash(node -e 'console.log\\(JSON.parse\\(require\\('\\\\''fs'\\\\''\\).readFileSync\\('\\\\''C:/Users/jayan/AppData/Local/Temp/claude/c--Project-AI-Telecom-society-wtr/ffabed02-21a1-4f85-832d-5f7fdddf2c1b/scratchpad/bucket-creds.json'\\\\''\\)\\).endpoint\\)')",
+      "Bash(node -e 'console.log\\(JSON.parse\\(require\\('\\\\''fs'\\\\''\\).readFileSync\\('\\\\''C:/Users/jayan/AppData/Local/Temp/claude/c--Project-AI-Telecom-society-wtr/ffabed02-21a1-4f85-832d-5f7fdddf2c1b/scratchpad/bucket-creds.json'\\\\''\\)\\).accessKeyId\\)')",
+      "Bash(node -e 'console.log\\(JSON.parse\\(require\\('\\\\''fs'\\\\''\\).readFileSync\\('\\\\''C:/Users/jayan/AppData/Local/Temp/claude/c--Project-AI-Telecom-society-wtr/ffabed02-21a1-4f85-832d-5f7fdddf2c1b/scratchpad/bucket-creds.json'\\\\''\\)\\).secretAccessKey\\)')",
+      "Bash(node -e 'console.log\\(JSON.parse\\(require\\('\\\\''fs'\\\\''\\).readFileSync\\('\\\\''C:/Users/jayan/AppData/Local/Temp/claude/c--Project-AI-Telecom-society-wtr/ffabed02-21a1-4f85-832d-5f7fdddf2c1b/scratchpad/bucket-creds.json'\\\\''\\)\\).bucketName\\)')",
+      "Bash(node -e ' *)",
+      "Bash(node -e 'console.log\\(JSON.parse\\(require\\('\\\\''fs'\\\\''\\).readFileSync\\('\\\\''C:/Users/jayan/AppData/Local/Temp/claude/c--Project-AI-Telecom-society-wtr/ffabed02-21a1-4f85-832d-5f7fdddf2c1b/scratchpad/bucket-creds.json'\\\\''\\)\\).region\\)')",
+      "Bash(echo \"BACKUP_BUCKET_REGION=auto\")",
+      "Bash(rm -f __TRACKED_VAR__/bucket-creds.json __TRACKED_VAR__/bucket-creds.err)",
+      "Bash(node --check backupService.js)",
+      "Bash(node --check emailService.js)",
+      "Bash(curl -s http://localhost:5545/api/backups/status)",
+      "Bash(curl -s -X POST http://localhost:5545/api/backups/run)",
+      "Bash(curl -s -o /tmp/downloaded-from-bucket.json -w \"HTTP %{http_code}\\\\n\" \"http://localhost:5545/api/backups/download/society_backup_2026-08-11T14-15-51-756Z.json\")",
+      "Bash(node -e \"const j = JSON.parse\\(require\\('fs'\\).readFileSync\\('/tmp/downloaded-from-bucket.json'\\)\\); console.log\\('members:', j.members.length, 'receipts:', j.receipts.length\\);\")",
+      "Bash(curl -s -o C:/Users/jayan/AppData/Local/Temp/claude/c--Project-AI-Telecom-society-wtr/ffabed02-21a1-4f85-832d-5f7fdddf2c1b/scratchpad/downloaded-from-bucket.json -w 'HTTP %{http_code}\\\\n' http://localhost:5545/api/backups/download/society_backup_2026-08-11T14-15-51-756Z.json)",
+      "Bash(curl -s -w \"\\\\nHTTP %{http_code}\\\\n\" \"http://localhost:5545/api/backups/download/nonexistent_file.json\")",
+      "Bash(taskkill //PID 13916 //F)"
     ]
   }
 }
