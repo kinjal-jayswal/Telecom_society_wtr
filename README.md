@@ -8,7 +8,8 @@ A member portal for **The Ahmedabad Telephone Employees' Co-Operative Credit & S
 - **Member Summary** — combined view of a member's profile, active loans, and receipt history.
 - **Admin Workspace** (login-gated in the UI)
   - Bulk data import from **CSV, Excel (.xlsx/.xls), or PDF** statements, upserted into the database.
-  - Board of Directors CRUD.
+  - **AI-assisted parsing (Claude)** — optional, toggleable: PDF and Excel uploads can be read by Claude instead of the fixed-format parser, so inconsistent headers or irregular layouts still get mapped correctly. Falls back to the standard parser automatically if AI parsing fails or isn't configured. CSV always uses the standard parser.
+  - Board of Directors CRUD, including an optional photograph per member (falls back to an initials avatar).
   - Society settings (name, address, contact info, interest rate, max loan amount).
   - Database backups: manual trigger, fortnightly automatic scheduler, download, and full JSON export.
 - **WhatsApp Bot Simulator** — a chat-style UI backed by a webhook endpoint that answers `receipt`, `loans`, and `summary` commands.
@@ -21,7 +22,7 @@ A member portal for **The Ahmedabad Telephone Employees' Co-Operative Credit & S
 | Frontend | React 18 + Vite, [lucide-react](https://lucide.dev/) icons |
 | Backend  | Node.js + Express |
 | Database | SQLite (local dev) or PostgreSQL (production, via `DATABASE_URL`) |
-| File parsing | `csv-parser`, `xlsx`, `pdf-parse` |
+| File parsing | `csv-parser`, `xlsx`, `pdf-parse`, optionally `@anthropic-ai/sdk` (Claude) |
 | Uploads | `multer` |
 | Deployment | Procfile-based (Heroku/Railway style) |
 
@@ -32,6 +33,7 @@ The backend (`database.js`) auto-detects the environment: if `DATABASE_URL` is s
 ```
 ├── server.js            # Express app, REST API routes, file upload/parsing, WhatsApp webhook
 ├── database.js          # DB connection, schema (SQLite + Postgres), query helpers, seed data
+├── aiParser.js            # Optional Claude-based extraction for PDF/Excel uploads
 ├── backupService.js      # Manual + fortnightly-scheduled backup logic
 ├── src/
 │   ├── main.jsx         # React entry point
@@ -74,10 +76,16 @@ npm start       # runs server.js, which serves dist/ and the API on $PORT (defau
 
 ## Configuration
 
+Copy [.env.example](.env.example) to `.env` for local development (loaded automatically via `dotenv`; not needed on Railway, which injects vars directly).
+
 | Env Var | Purpose |
 |---------|---------|
 | `PORT` | Port for the Express server (defaults to `5545`) |
 | `DATABASE_URL` | If set, connects to PostgreSQL instead of local SQLite |
+| `ANTHROPIC_API_KEY` | Enables AI-assisted PDF/Excel parsing. Without it, `/api/ai-status` reports `configured: false` and uploads always use the standard parser regardless of the admin toggle. |
+| `ANTHROPIC_MODEL` | Optional — defaults to `claude-sonnet-5` |
+
+AI parsing also requires the admin toggle at Admin Panel → Upload tab → "AI-Assisted Parsing (Claude)" to be turned on (persisted as the `ai_parsing_enabled` setting) — having the API key alone doesn't turn it on for uploads.
 
 ## Database
 
@@ -96,7 +104,9 @@ Tables: `members`, `receipts`, `loans`, `board_members`, `settings`, `backups`. 
 | POST | `/api/backups/run` | Trigger a manual backup |
 | GET | `/api/backups/download/:filename` | Download a backup file |
 | GET | `/api/backups/export` | Export full DB state as JSON |
-| POST | `/api/upload-data` | Upload & import CSV/Excel/PDF member data |
+| POST | `/api/upload-data` | Upload & import CSV/Excel/PDF member data (AI-assisted when enabled) |
+| GET | `/api/ai-status` | Whether an Anthropic API key is configured, the model, and whether AI parsing is enabled |
+| POST | `/api/ai-status/test` | Runs a live round-trip call to Claude to verify the key/model work |
 | POST | `/api/whatsapp/webhook` | Simulated WhatsApp bot (`receipt`, `loans`, `summary`, `help`) |
 
 ## Notes

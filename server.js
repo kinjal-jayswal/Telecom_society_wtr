@@ -1,3 +1,4 @@
+import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
 import multer from 'multer';
@@ -25,6 +26,7 @@ import {
   isPostgres 
 } from './database.js';
 import { performBackup, startBackupScheduler } from './backupService.js';
+import { isAIAvailable, getAIModel, aiExtractRecords, testAIConnection } from './aiParser.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const uploadDir = join(__dirname, 'uploads');
@@ -190,6 +192,27 @@ app.post('/api/settings', async (req, res) => {
   }
 });
 
+// AI-Assisted Parsing Status Routes
+app.get('/api/ai-status', async (req, res) => {
+  try {
+    const settings = await getSettings();
+    res.json({
+      configured: isAIAvailable(),
+      model: getAIModel(),
+      enabled: settings.ai_parsing_enabled === 'true'
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Runs a real (tiny) call to Claude so the admin can confirm the configured
+// API key/model actually work, not just that a key string is present.
+app.post('/api/ai-status/test', async (req, res) => {
+  const result = await testAIConnection();
+  res.json(result);
+});
+
 // Board of Directors Routes
 app.get('/api/board', async (req, res) => {
   try {
@@ -253,13 +276,42 @@ app.post('/api/upload-data', upload.single('file'), async (req, res) => {
 
   try {
     let records = [];
+    let aiUsed = false;
+    let aiError = null;
+
+    const settings = await getSettings();
+    const aiEnabled = settings.ai_parsing_enabled === 'true' && isAIAvailable();
 
     if (fileExtension === 'csv') {
+      // CSVs already have well-defined headers — the deterministic parser
+      // handles them reliably, so AI extraction isn't used here.
       records = await parseCSV(filePath);
     } else if (fileExtension === 'xlsx' || fileExtension === 'xls') {
-      records = await parseExcel(filePath);
+      if (aiEnabled) {
+        try {
+          records = await aiExtractRecords(excelToCsvText(filePath), 'an Excel spreadsheet');
+          aiUsed = true;
+        } catch (err) {
+          aiError = err.message;
+          console.error('AI Excel extraction failed, falling back to standard parser:', err.message);
+          records = await parseExcel(filePath);
+        }
+      } else {
+        records = await parseExcel(filePath);
+      }
     } else if (fileExtension === 'pdf') {
-      records = await parsePDF(filePath);
+      if (aiEnabled) {
+        try {
+          records = await aiExtractRecords(await extractPdfText(filePath), 'a PDF recovery statement');
+          aiUsed = true;
+        } catch (err) {
+          aiError = err.message;
+          console.error('AI PDF extraction failed, falling back to standard parser:', err.message);
+          records = await parsePDF(filePath);
+        }
+      } else {
+        records = await parsePDF(filePath);
+      }
     } else {
       throw new Error('Unsupported file format. Please upload CSV, Excel, or PDF.');
     }
@@ -277,7 +329,9 @@ app.post('/api/upload-data', upload.single('file'), async (req, res) => {
     res.json({
       message: 'File processed successfully.',
       recordsParsed: records.length,
-      stats: importStats
+      stats: importStats,
+      aiUsed,
+      aiError
     });
 
   } catch (error) {
@@ -381,15 +435,24 @@ function parseCSV(filePath) {
   });
 }
 
+// Reads a workbook from disk. `xlsx.readFile` isn't a named ESM export in
+// this package (only `read`/`write`/`utils` are) — importing it via
+// `import * as xlsx from 'xlsx'` and calling `.readFile` throws, so we read
+// the buffer ourselves and use `xlsx.read` instead.
+function readWorkbook(filePath) {
+  const buffer = fs.readFileSync(filePath);
+  return xlsx.read(buffer, { type: 'buffer' });
+}
+
 // Excel Parser
 function parseExcel(filePath) {
   return new Promise((resolve, reject) => {
     try {
-      const workbook = xlsx.readFile(filePath);
+      const workbook = readWorkbook(filePath);
       const sheetName = workbook.SheetNames[0];
       const sheet = workbook.Sheets[sheetName];
       const data = xlsx.utils.sheet_to_json(sheet);
-      
+
       const results = data.map((item) => {
         const row = {};
         Object.keys(item).forEach((key) => {
@@ -405,14 +468,28 @@ function parseExcel(filePath) {
   });
 }
 
-// PDF Parser
+// Renders the first sheet as CSV text for the AI parser, which can handle
+// inconsistent/unexpected column headers better than the fixed key-matching
+// above.
+function excelToCsvText(filePath) {
+  const workbook = readWorkbook(filePath);
+  const sheetName = workbook.SheetNames[0];
+  const sheet = workbook.Sheets[sheetName];
+  return xlsx.utils.sheet_to_csv(sheet);
+}
+
+// Extracts raw text from a PDF (shared by the regex parser below and the AI parser)
+async function extractPdfText(filePath) {
+  const dataBuffer = fs.readFileSync(filePath);
+  const data = await pdf(dataBuffer);
+  return data.text;
+}
+
+// PDF Parser (fixed-format fallback used when AI parsing is off/unavailable)
 function parsePDF(filePath) {
   return new Promise(async (resolve, reject) => {
     try {
-      const dataBuffer = fs.readFileSync(filePath);
-      const data = await pdf(dataBuffer);
-      const text = data.text;
-      
+      const text = await extractPdfText(filePath);
       const lines = text.split('\n');
       const records = [];
 
@@ -420,7 +497,7 @@ function parsePDF(filePath) {
         const trimmed = line.trim();
         const regex = /^(\d+)\s+([a-zA-Z\s]+)\s+(\d{4})\s+(\d{2})\s+(\d+(?:\.\d+)?)\s+(\d+(?:\.\d+)?)\s+(\d+(?:\.\d+)?)/;
         const match = trimmed.match(regex);
-        
+
         if (match) {
           records.push({
             staffno: match[1],

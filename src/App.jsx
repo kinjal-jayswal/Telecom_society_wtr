@@ -79,6 +79,13 @@ export default function App() {
   const [uploadLoading, setUploadLoading] = useState(false);
   const [uploadSuccess, setUploadSuccess] = useState('');
   const [uploadError, setUploadError] = useState('');
+  const [uploadUsedAI, setUploadUsedAI] = useState(false);
+
+  // AI-Assisted Parsing (Claude) State
+  const [aiStatus, setAiStatus] = useState({ configured: false, model: '', enabled: false });
+  const [aiToggleLoading, setAiToggleLoading] = useState(false);
+  const [aiTestLoading, setAiTestLoading] = useState(false);
+  const [aiTestResult, setAiTestResult] = useState(null);
 
   // Backup State
   const [backups, setBackups] = useState([]);
@@ -114,6 +121,7 @@ export default function App() {
     if (adminLoggedIn) {
       fetchBackups();
       fetchMembers();
+      fetchAIStatus();
     }
   }, [adminLoggedIn]);
 
@@ -149,6 +157,50 @@ export default function App() {
       if (res.ok) setBoardMembers(data);
     } catch (err) {
       console.error('Error fetching board members:', err);
+    }
+  };
+
+  // AI-Assisted Parsing (Claude): status, on/off toggle, and a connection test
+  const fetchAIStatus = async () => {
+    try {
+      const res = await fetch('/api/ai-status');
+      const data = await res.json();
+      if (res.ok) setAiStatus(data);
+    } catch (err) {
+      console.error('Error fetching AI status:', err);
+    }
+  };
+
+  const handleToggleAI = async () => {
+    setAiToggleLoading(true);
+    setAiTestResult(null);
+    try {
+      const res = await fetch('/api/settings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ai_parsing_enabled: (!aiStatus.enabled).toString() })
+      });
+      if (res.ok) {
+        await fetchAIStatus();
+      }
+    } catch (err) {
+      console.error('Error toggling AI parsing:', err);
+    } finally {
+      setAiToggleLoading(false);
+    }
+  };
+
+  const handleTestAI = async () => {
+    setAiTestLoading(true);
+    setAiTestResult(null);
+    try {
+      const res = await fetch('/api/ai-status/test', { method: 'POST' });
+      const data = await res.json();
+      setAiTestResult(data);
+    } catch (err) {
+      setAiTestResult({ ok: false, error: 'Network error testing AI connection.' });
+    } finally {
+      setAiTestLoading(false);
     }
   };
 
@@ -376,6 +428,7 @@ export default function App() {
     setUploadLoading(true);
     setUploadError('');
     setUploadSuccess('');
+    setUploadUsedAI(false);
 
     const formData = new FormData();
     formData.append('file', uploadFile);
@@ -388,7 +441,11 @@ export default function App() {
       const data = await res.json();
 
       if (res.ok) {
-        setUploadSuccess(`File parsed and records saved successfully!\n- Members created/verified\n- Receipts imported: ${data.recordsParsed}`);
+        setUploadUsedAI(!!data.aiUsed);
+        const parserNote = data.aiUsed
+          ? `Parsed with AI assistance (${aiStatus.model})`
+          : (data.aiError ? `AI parsing failed, used standard parser instead (${data.aiError})` : 'Parsed with standard parser');
+        setUploadSuccess(`File parsed and records saved successfully!\n- Parser used: ${parserNote}\n- Receipts imported: ${data.recordsParsed}`);
         fetchMembers();
       } else {
         setUploadError(data.error || 'Failed to process file.');
@@ -1173,7 +1230,14 @@ export default function App() {
                           {uploadSuccess && (
                             <div style={{ display: 'flex', alignItems: 'flex-start', gap: '8px', background: 'rgba(16, 185, 129, 0.1)', border: '1px solid rgba(16, 185, 129, 0.2)', padding: '12px', borderRadius: '8px', color: 'var(--secondary)' }}>
                               <CheckCircle2 size={16} style={{ marginTop: '2px', flexShrink: 0 }} />
-                              <pre style={{ fontSize: '12px', fontFamily: 'var(--font-body)', whiteSpace: 'pre-wrap' }}>{uploadSuccess}</pre>
+                              <div>
+                                <pre style={{ fontSize: '12px', fontFamily: 'var(--font-body)', whiteSpace: 'pre-wrap', margin: 0 }}>{uploadSuccess}</pre>
+                                {uploadUsedAI && (
+                                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', marginTop: '6px', fontSize: '11px', fontWeight: '600', color: 'var(--primary)', background: 'rgba(59, 130, 246, 0.12)', padding: '3px 8px', borderRadius: '999px' }}>
+                                    <Sparkles size={11} /> Parsed with AI
+                                  </span>
+                                )}
+                              </div>
                             </div>
                           )}
 
@@ -1181,6 +1245,80 @@ export default function App() {
                             {uploadLoading ? 'Uploading and Processing...' : 'Upload & Process Sheet'}
                           </button>
                         </form>
+                      </div>
+
+                      {/* AI-Assisted Parsing (Claude) Panel */}
+                      <div className="glass-panel" style={{ padding: '24px' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '16px', borderBottom: '1px solid var(--surface-border)', paddingBottom: '12px' }}>
+                          <Sparkles size={20} style={{ color: 'var(--primary)' }} />
+                          <h3 style={{ fontSize: '18px' }}>AI-Assisted Parsing (Claude)</h3>
+                        </div>
+
+                        <p style={{ fontSize: '13px', color: 'var(--text-secondary)', marginBottom: '16px' }}>
+                          When enabled, PDF and Excel uploads are read by Claude instead of the fixed-format parser, so inconsistent headers, merged cells, or irregular layouts still get mapped correctly. CSV uploads always use the standard parser. If AI parsing fails for any reason, the upload automatically falls back to the standard parser.
+                        </p>
+
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', marginBottom: '16px' }}>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px' }}>
+                            <span style={{ color: 'var(--text-secondary)' }}>API Key</span>
+                            <span style={{ fontWeight: '600', color: aiStatus.configured ? 'var(--secondary)' : 'var(--accent-red)' }}>
+                              {aiStatus.configured ? 'Configured' : 'Not Configured'}
+                            </span>
+                          </div>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px' }}>
+                            <span style={{ color: 'var(--text-secondary)' }}>Model</span>
+                            <span style={{ fontWeight: '600' }}>{aiStatus.model || '—'}</span>
+                          </div>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px' }}>
+                            <span style={{ color: 'var(--text-secondary)' }}>AI Parsing for Uploads</span>
+                            <span style={{ fontWeight: '600', color: aiStatus.enabled ? 'var(--secondary)' : 'var(--text-secondary)' }}>
+                              {aiStatus.enabled ? 'ON' : 'OFF'}
+                            </span>
+                          </div>
+                        </div>
+
+                        <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
+                          <button
+                            type="button"
+                            className="btn-primary"
+                            style={{ fontSize: '13px', padding: '8px 16px' }}
+                            onClick={handleToggleAI}
+                            disabled={aiToggleLoading || !aiStatus.configured}
+                            title={!aiStatus.configured ? 'Set ANTHROPIC_API_KEY on the server to enable this' : ''}
+                          >
+                            {aiToggleLoading ? 'Updating...' : (aiStatus.enabled ? 'Turn AI Parsing Off' : 'Turn AI Parsing On')}
+                          </button>
+                          <button
+                            type="button"
+                            className="btn-secondary"
+                            style={{ fontSize: '13px', padding: '8px 16px' }}
+                            onClick={handleTestAI}
+                            disabled={aiTestLoading}
+                          >
+                            {aiTestLoading ? 'Testing...' : 'Test Connection'}
+                          </button>
+                        </div>
+
+                        {aiTestResult && (
+                          <div style={{
+                            marginTop: '14px',
+                            display: 'flex',
+                            alignItems: 'flex-start',
+                            gap: '8px',
+                            background: aiTestResult.ok ? 'rgba(16, 185, 129, 0.1)' : 'rgba(239, 68, 68, 0.1)',
+                            border: `1px solid ${aiTestResult.ok ? 'rgba(16, 185, 129, 0.2)' : 'rgba(239, 68, 68, 0.2)'}`,
+                            padding: '12px',
+                            borderRadius: '8px',
+                            color: aiTestResult.ok ? 'var(--secondary)' : 'var(--accent-red)'
+                          }}>
+                            {aiTestResult.ok ? <CheckCircle2 size={16} style={{ marginTop: '2px', flexShrink: 0 }} /> : <AlertTriangle size={16} style={{ marginTop: '2px', flexShrink: 0 }} />}
+                            <span style={{ fontSize: '13px' }}>
+                              {aiTestResult.ok
+                                ? `Connection OK — ${aiTestResult.model} responded successfully.`
+                                : (aiTestResult.error || 'Connection failed.')}
+                            </span>
+                          </div>
+                        )}
                       </div>
                     </div>
 

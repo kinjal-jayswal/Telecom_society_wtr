@@ -38,7 +38,17 @@ There is no test suite, linter, or type checker configured in this repo (no `tes
 
 ### Data import pipeline
 
-`POST /api/upload-data` accepts CSV, XLSX/XLS, or PDF (regex line-matching), normalizes each row's keys (lowercase, strip non-alphanumerics) in `parseCSV`/`parseExcel`/`parsePDF`, then `importRecords()` in database.js upserts members and receipts, tolerating multiple possible column-name aliases per field (e.g. `staffno`/`staff_no`/`hrms`/`staff_id`).
+`POST /api/upload-data` accepts CSV, XLSX/XLS, or PDF. CSV always uses the deterministic `parseCSV` (header-based). For XLSX/PDF, when AI parsing is enabled (see below) it calls `aiExtractRecords()` in [aiParser.js](aiParser.js) instead of the fixed-format `parseExcel`/`parsePDF` (regex line-matching); on any AI failure it falls back to the fixed-format parser automatically and reports `aiError` in the response. `importRecords()` in database.js then upserts members and receipts, tolerating multiple possible column-name aliases per field (e.g. `staffno`/`staff_no`/`hrms`/`staff_id`) — this is why the AI tool schema's field names (`staffno`, `savingsdeposit`, ...) were chosen to match those aliases directly.
+
+**`xlsx` ESM import gotcha**: `import * as xlsx from 'xlsx'` does *not* expose `readFile`/`writeFile` as named exports (only `read`/`write`/`utils` are real named exports; `readFile`/`writeFile` live on the CJS `default` only). Always read the file into a buffer and call `xlsx.read(buffer, { type: 'buffer' })` (see `readWorkbook()` in server.js) — calling `xlsx.readFile()` directly throws `xlsx.readFile is not a function` at runtime, not at build time, so this is easy to miss without an actual upload test.
+
+### AI-assisted parsing (Claude)
+
+[aiParser.js](aiParser.js) wraps `@anthropic-ai/sdk`, forcing structured JSON output via a single tool (`extract_society_records`) with `tool_choice` pinned to it, so the model can't return prose. It's gated by two independent switches that both need to be true for `/api/upload-data` to use it:
+1. `process.env.ANTHROPIC_API_KEY` present (`isAIAvailable()`).
+2. The `ai_parsing_enabled` row in the generic `settings` key-value table (admin-toggleable from the Upload tab; read via the existing `getSettings()`, no schema change needed).
+
+`GET /api/ai-status` exposes `{ configured, model, enabled }` (never the key itself) and `POST /api/ai-status/test` makes one live, cheap Claude call so the admin can verify the key/model actually work, not just that a string is set. `ANTHROPIC_MODEL` overrides the default model (`claude-sonnet-5`).
 
 ### Backups
 
@@ -58,3 +68,7 @@ There is no test suite, linter, or type checker configured in this repo (no `tes
 |---|---|
 | `PORT` | Express listen port (default `5545`) |
 | `DATABASE_URL` | If set, switches `database.js` to PostgreSQL |
+| `ANTHROPIC_API_KEY` | Enables AI-assisted PDF/Excel parsing (still needs the `ai_parsing_enabled` setting on to actually be used) |
+| `ANTHROPIC_MODEL` | Overrides the default Claude model (`claude-sonnet-5`) used for parsing and the connection test |
+
+Local dev loads these from `.env` via `dotenv/config` (see [.env.example](.env.example)); Railway injects them directly, no `.env` involved.
