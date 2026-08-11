@@ -336,6 +336,95 @@ export async function getFullState() {
   return { members, receipts, loans, boardMembers, settings, backups };
 }
 
+// Restores a snapshot previously produced by getFullState() (the JSON
+// export downloaded from the admin Backups tab). Clears each table and
+// re-inserts the backup's rows in FK-safe order (members before the
+// loans/receipts that reference member_id), preserving original IDs so
+// those relationships stay intact. Not wrapped in a DB transaction —
+// consistent with the rest of this file, which doesn't use them either —
+// so the returned per-table stats/errors are how a partial failure shows up.
+export async function importFullState(state) {
+  const stats = { members: 0, loans: 0, receipts: 0, boardMembers: 0, settings: 0, errors: [] };
+
+  await run("DELETE FROM receipts");
+  await run("DELETE FROM loans");
+  await run("DELETE FROM members");
+  await run("DELETE FROM board_members");
+  await run("DELETE FROM settings");
+
+  for (const m of state.members || []) {
+    try {
+      await run(
+        "INSERT INTO members (id, staff_no, name, email, phone, status) VALUES ($1, $2, $3, $4, $5, $6)",
+        [m.id, m.staff_no, m.name, m.email ?? null, m.phone ?? null, m.status ?? 'ACTIVE']
+      );
+      stats.members++;
+    } catch (err) {
+      stats.errors.push(`member ${m.staff_no}: ${err.message}`);
+    }
+  }
+
+  for (const l of state.loans || []) {
+    try {
+      await run(
+        "INSERT INTO loans (id, member_id, loan_type, loan_amount, interest_rate, installments_total, installments_paid, remaining_balance) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
+        [l.id, l.member_id, l.loan_type, l.loan_amount, l.interest_rate, l.installments_total, l.installments_paid ?? 0, l.remaining_balance]
+      );
+      stats.loans++;
+    } catch (err) {
+      stats.errors.push(`loan ${l.id}: ${err.message}`);
+    }
+  }
+
+  for (const r of state.receipts || []) {
+    try {
+      await run(
+        "INSERT INTO receipts (id, member_id, year, month, total_recovered, savings_deposit, loan_recovery, interest_recovery) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
+        [r.id, r.member_id, r.year, r.month, r.total_recovered, r.savings_deposit, r.loan_recovery, r.interest_recovery]
+      );
+      stats.receipts++;
+    } catch (err) {
+      stats.errors.push(`receipt ${r.id}: ${err.message}`);
+    }
+  }
+
+  for (const b of state.boardMembers || []) {
+    try {
+      await run(
+        "INSERT INTO board_members (id, name, role, initials, display_order, photo_url) VALUES ($1, $2, $3, $4, $5, $6)",
+        [b.id, b.name, b.role, b.initials, b.display_order ?? 0, b.photo_url ?? null]
+      );
+      stats.boardMembers++;
+    } catch (err) {
+      stats.errors.push(`board member ${b.name}: ${err.message}`);
+    }
+  }
+
+  for (const s of state.settings || []) {
+    try {
+      await saveSettings(s.key, s.value);
+      stats.settings++;
+    } catch (err) {
+      stats.errors.push(`setting ${s.key}: ${err.message}`);
+    }
+  }
+
+  // Postgres SERIAL columns don't auto-advance when IDs are inserted
+  // explicitly, so the next auto-generated insert would collide with a
+  // restored ID unless the sequence is resynced to the restored max.
+  if (isPostgres) {
+    for (const table of ['members', 'loans', 'receipts', 'board_members']) {
+      try {
+        await run(`SELECT setval(pg_get_serial_sequence('${table}', 'id'), COALESCE((SELECT MAX(id) FROM ${table}), 1))`);
+      } catch (err) {
+        stats.errors.push(`sequence resync for ${table}: ${err.message}`);
+      }
+    }
+  }
+
+  return stats;
+}
+
 export async function importRecords(records) {
   let membersInserted = 0;
   let receiptsInserted = 0;

@@ -20,10 +20,12 @@ import {
   saveBoardMember,
   getBoardMemberById,
   deleteBoardMember,
-  getBackups, 
-  getFullState, 
-  importRecords, 
-  isPostgres 
+  getBackups,
+  getFullState,
+  importFullState,
+  addBackupLog,
+  importRecords,
+  isPostgres
 } from './database.js';
 import { performBackup, startBackupScheduler } from './backupService.js';
 import { isAIAvailable, getAIModel, aiExtractRecords, testAIConnection } from './aiParser.js';
@@ -163,6 +165,42 @@ app.get('/api/backups/export', async (req, res) => {
     res.setHeader('Content-Disposition', 'attachment; filename=society_database_export.json');
     res.send(JSON.stringify(state, null, 2));
   } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Restores a snapshot previously downloaded from /api/backups/export.
+// Destructive: clears every table before re-inserting the backup's rows.
+app.post('/api/backups/import', upload.single('file'), async (req, res) => {
+  if (!req.file) {
+    return res.status(400).json({ error: 'No backup file uploaded.' });
+  }
+
+  const filePath = req.file.path;
+
+  try {
+    const raw = fs.readFileSync(filePath, 'utf-8');
+    fs.unlink(filePath, () => {});
+
+    let state;
+    try {
+      state = JSON.parse(raw);
+    } catch (parseErr) {
+      return res.status(400).json({ error: 'That file is not valid JSON.' });
+    }
+
+    if (!state || typeof state !== 'object' || !Array.isArray(state.members)) {
+      return res.status(400).json({ error: 'This does not look like a valid backup export file (missing a members array).' });
+    }
+
+    const stats = await importFullState(state);
+    const status = stats.errors.length > 0 ? 'PARTIAL' : 'SUCCESS';
+    await addBackupLog(`restore_from_${req.file.originalname}`, raw.length, status).catch(() => {});
+
+    res.json({ message: 'Backup restore complete.', stats });
+  } catch (err) {
+    console.error('Backup restore failed:', err);
+    if (fs.existsSync(filePath)) fs.unlink(filePath, () => {});
     res.status(500).json({ error: err.message });
   }
 });

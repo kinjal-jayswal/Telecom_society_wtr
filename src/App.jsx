@@ -91,6 +91,9 @@ export default function App() {
   const [backups, setBackups] = useState([]);
   const [backupLoading, setBackupLoading] = useState(false);
   const [backupMessage, setBackupMessage] = useState('');
+  const [restoreFile, setRestoreFile] = useState(null);
+  const [restoreLoading, setRestoreLoading] = useState(false);
+  const [restoreMessage, setRestoreMessage] = useState('');
 
   // Member management state
   const [members, setMembers] = useState([]);
@@ -362,6 +365,47 @@ export default function App() {
       setBackupMessage('Network error triggering backup.');
     } finally {
       setBackupLoading(false);
+    }
+  };
+
+  // Restore from a previously exported JSON backup file. Destructive —
+  // clears every table before re-inserting the backup's rows — so this
+  // requires an explicit confirmation before it runs.
+  const handleRestoreBackup = async () => {
+    if (!restoreFile) {
+      setRestoreMessage('Select a backup JSON file first.');
+      return;
+    }
+    if (!confirm('This will DELETE all current members, receipts, loans, board members, and settings, then replace them with the contents of this backup file. This cannot be undone. Continue?')) {
+      return;
+    }
+
+    setRestoreLoading(true);
+    setRestoreMessage('');
+
+    const formData = new FormData();
+    formData.append('file', restoreFile);
+
+    try {
+      const res = await fetch('/api/backups/import', { method: 'POST', body: formData });
+      const data = await res.json();
+
+      if (res.ok) {
+        const { stats } = data;
+        const errorNote = stats.errors.length > 0 ? ` (${stats.errors.length} row(s) failed — check server logs)` : '';
+        setRestoreMessage(`Restored ${stats.members} members, ${stats.loans} loans, ${stats.receipts} receipts, ${stats.boardMembers} board members, ${stats.settings} settings.${errorNote}`);
+        setRestoreFile(null);
+        fetchBackups();
+        fetchMembers();
+        fetchBoardMembers();
+        fetchSettings();
+      } else {
+        setRestoreMessage(`Error: ${data.error}`);
+      }
+    } catch (err) {
+      setRestoreMessage('Network error restoring backup.');
+    } finally {
+      setRestoreLoading(false);
     }
   };
 
@@ -1487,6 +1531,34 @@ export default function App() {
                     {backupMessage && (
                       <p style={{ fontSize: '12px', color: 'var(--accent-gold)', marginBottom: '12px' }}>{backupMessage}</p>
                     )}
+
+                    <div style={{ marginBottom: '20px', background: 'rgba(239, 68, 68, 0.05)', border: '1px solid rgba(239, 68, 68, 0.2)', padding: '14px', borderRadius: '8px' }}>
+                      <strong style={{ fontSize: '13px', display: 'flex', alignItems: 'center', gap: '6px', color: 'var(--accent-red)', marginBottom: '6px' }}>
+                        <AlertTriangle size={14} /> Restore from Backup File
+                      </strong>
+                      <p style={{ fontSize: '11px', color: 'var(--text-secondary)', marginBottom: '10px' }}>
+                        Upload a JSON file previously downloaded via "Export JSON Data" to recover the database — for example, after the Railway database is lost or corrupted. This <strong>deletes all current data</strong> (members, receipts, loans, board members, settings) and replaces it with the backup's contents. Cannot be undone.
+                      </p>
+                      <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
+                        <input
+                          type="file"
+                          accept="application/json,.json"
+                          onChange={(e) => setRestoreFile(e.target.files[0])}
+                          style={{ fontSize: '12px' }}
+                        />
+                        <button
+                          className="btn-secondary"
+                          style={{ fontSize: '12px', padding: '6px 12px', color: 'var(--accent-red)', borderColor: 'rgba(239,68,68,0.3)' }}
+                          onClick={handleRestoreBackup}
+                          disabled={restoreLoading || !restoreFile}
+                        >
+                          {restoreLoading ? 'Restoring...' : 'Restore from This File'}
+                        </button>
+                      </div>
+                      {restoreMessage && (
+                        <p style={{ fontSize: '11px', color: 'var(--text-secondary)', marginTop: '8px' }}>{restoreMessage}</p>
+                      )}
+                    </div>
 
                     <h4 style={{ fontSize: '14px', color: 'var(--text-secondary)', marginBottom: '8px' }}>Recent Backup Logs</h4>
                     
