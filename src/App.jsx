@@ -393,6 +393,27 @@ export default function App() {
     }
   };
 
+  // Opens WhatsApp (app or web) with the receipt pre-filled as a message.
+  // Uses the wa.me share link, not the WhatsApp Business API, so there's no
+  // account setup and nothing is sent automatically — the recipient still
+  // has to hit Send themselves.
+  const handleShareWhatsApp = () => {
+    if (!searchResult) return;
+
+    const message = `📄 *Recovery Receipt - ${searchMonth}/${searchYear}*\n----------------------------------------\n👤 *Member:* ${searchResult.name}\n🆔 *Staff No:* ${searchResult.staff_no}\n\n💰 *Savings Deposit:* ₹${searchResult.savings_deposit.toLocaleString()}\n🏦 *Loan Recovery:* ₹${searchResult.loan_recovery.toLocaleString()}\n📈 *Interest Recovery:* ₹${searchResult.interest_recovery.toLocaleString()}\n\n💵 *Total Recovered:* ₹${searchResult.total_recovered.toLocaleString()}\n----------------------------------------\n${settings.society_name || 'ATD Credit & Supply Society'}`;
+
+    // Indian mobile numbers are stored as 10 digits with no country code;
+    // wa.me needs the country code to pre-select the recipient.
+    const digits = (searchResult.phone || '').replace(/\D/g, '');
+    const phoneWithCountryCode = digits ? (digits.length === 10 ? `91${digits}` : digits) : '';
+
+    const url = phoneWithCountryCode
+      ? `https://wa.me/${phoneWithCountryCode}?text=${encodeURIComponent(message)}`
+      : `https://wa.me/?text=${encodeURIComponent(message)}`;
+
+    window.open(url, '_blank', 'noopener,noreferrer');
+  };
+
   // View member dashboard details
   const fetchMemberSummary = async (staffNo) => {
     try {
@@ -1067,15 +1088,22 @@ export default function App() {
                 </div>
 
                 {/* Print button (non-printable in css) */}
-                <div style={{ marginTop: '24px', display: 'flex', gap: '12px' }} className="no-print">
-                  <button 
-                    className="btn-primary" 
+                <div style={{ marginTop: '24px', display: 'flex', gap: '12px', flexWrap: 'wrap' }} className="no-print">
+                  <button
+                    className="btn-primary"
                     style={{ background: '#1e3a8a', color: '#fff' }}
                     onClick={() => window.print()}
                   >
                     Print Receipt
                   </button>
-                  <button 
+                  <button
+                    className="btn-primary"
+                    style={{ background: '#25D366', color: '#fff', display: 'inline-flex', alignItems: 'center', gap: '6px' }}
+                    onClick={handleShareWhatsApp}
+                  >
+                    <MessageSquare size={16} /> Send via WhatsApp
+                  </button>
+                  <button
                     className="btn-secondary"
                     style={{ border: '1px solid #cbd5e1', color: '#0f172a' }}
                     onClick={() => setSearchResult(null)}
@@ -1083,6 +1111,11 @@ export default function App() {
                     Close
                   </button>
                 </div>
+                {!searchResult.phone && (
+                  <p className="no-print" style={{ fontSize: '11px', color: '#64748b', marginTop: '8px' }}>
+                    No phone number on file for this member — WhatsApp will open with the message ready, but you'll need to pick the recipient manually.
+                  </p>
+                )}
 
               </div>
             )}
