@@ -25,8 +25,10 @@ import {
   importFullState,
   addBackupLog,
   importRecords,
+  importSocietyWorkbook,
   isPostgres
 } from './database.js';
+import { parseSocietyWorkbook } from './societyParser.js';
 import { performBackup, startBackupScheduler, isBucketConfigured, downloadFromBucket } from './backupService.js';
 import { isAIAvailable, getAIModel, aiExtractRecords, testAIConnection } from './aiParser.js';
 import { isEmailConfigured, testEmailConnection } from './emailService.js';
@@ -352,6 +354,46 @@ app.get('/api/upload-data/template', (req, res) => {
   res.setHeader('Content-Type', 'text/csv');
   res.setHeader('Content-Disposition', 'attachment; filename=society_upload_template.csv');
   res.send(csvText);
+});
+
+// Imports the specific "members details" + "ledger" workbook format ATD
+// Credit & Supply Society maintains manually (see societyParser.js).
+// ?dryRun=true parses and returns a preview without writing to the
+// database — used to review a new file (and flagged issues) before
+// committing real member/receipt data.
+app.post('/api/upload-data/society-workbook', upload.single('file'), async (req, res) => {
+  if (!req.file) {
+    return res.status(400).json({ error: 'No file uploaded.' });
+  }
+
+  const filePath = req.file.path;
+  const dryRun = req.query.dryRun === 'true';
+
+  try {
+    const buffer = fs.readFileSync(filePath);
+    fs.unlink(filePath, () => {});
+
+    const parsed = parseSocietyWorkbook(buffer);
+
+    if (dryRun) {
+      return res.json({
+        dryRun: true,
+        memberCount: parsed.members.length,
+        receiptCount: parsed.receipts.length,
+        orphanMembers: parsed.orphanMembers,
+        issues: parsed.issues,
+        sampleMembers: parsed.members.slice(0, 5),
+        sampleReceipts: parsed.receipts.slice(0, 5)
+      });
+    }
+
+    const stats = await importSocietyWorkbook(parsed);
+    res.json({ message: 'Society workbook imported.', issues: parsed.issues, stats });
+  } catch (error) {
+    console.error('Society workbook import failed:', error);
+    if (fs.existsSync(filePath)) fs.unlink(filePath, () => {});
+    res.status(500).json({ error: error.message });
+  }
 });
 
 // 8. Upload Account Data (Admin Portal)

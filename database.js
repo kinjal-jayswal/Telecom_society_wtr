@@ -80,7 +80,16 @@ const SQLITE_SCHEMAS = [
     name TEXT NOT NULL,
     email TEXT,
     phone TEXT,
-    status TEXT DEFAULT 'ACTIVE'
+    status TEXT DEFAULT 'ACTIVE',
+    savings_balance REAL,
+    savings_balance_date TEXT,
+    share_amount REAL,
+    share_certificate_no TEXT,
+    interim_balance REAL,
+    interim_balance_date TEXT,
+    bonus_amount REAL,
+    current_balance REAL,
+    current_balance_date TEXT
   )`,
   `CREATE TABLE IF NOT EXISTS receipts (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -91,6 +100,9 @@ const SQLITE_SCHEMAS = [
     savings_deposit REAL NOT NULL,
     loan_recovery REAL NOT NULL,
     interest_recovery REAL NOT NULL,
+    receipt_no TEXT,
+    loan_balance_before REAL,
+    loan_balance_after REAL,
     FOREIGN KEY (member_id) REFERENCES members(id) ON DELETE CASCADE,
     UNIQUE(member_id, year, month)
   )`,
@@ -103,6 +115,9 @@ const SQLITE_SCHEMAS = [
     installments_total INTEGER NOT NULL,
     installments_paid INTEGER DEFAULT 0,
     remaining_balance REAL NOT NULL,
+    loan_taken_on TEXT,
+    guarantor1_name TEXT,
+    guarantor2_name TEXT,
     FOREIGN KEY (member_id) REFERENCES members(id) ON DELETE CASCADE
   )`,
   `CREATE TABLE IF NOT EXISTS backups (
@@ -133,7 +148,16 @@ const POSTGRES_SCHEMAS = [
     name VARCHAR(255) NOT NULL,
     email VARCHAR(255),
     phone VARCHAR(50),
-    status VARCHAR(50) DEFAULT 'ACTIVE'
+    status VARCHAR(50) DEFAULT 'ACTIVE',
+    savings_balance DOUBLE PRECISION,
+    savings_balance_date VARCHAR(20),
+    share_amount DOUBLE PRECISION,
+    share_certificate_no VARCHAR(50),
+    interim_balance DOUBLE PRECISION,
+    interim_balance_date VARCHAR(20),
+    bonus_amount DOUBLE PRECISION,
+    current_balance DOUBLE PRECISION,
+    current_balance_date VARCHAR(20)
   )`,
   `CREATE TABLE IF NOT EXISTS receipts (
     id SERIAL PRIMARY KEY,
@@ -144,6 +168,9 @@ const POSTGRES_SCHEMAS = [
     savings_deposit DOUBLE PRECISION NOT NULL,
     loan_recovery DOUBLE PRECISION NOT NULL,
     interest_recovery DOUBLE PRECISION NOT NULL,
+    receipt_no VARCHAR(50),
+    loan_balance_before DOUBLE PRECISION,
+    loan_balance_after DOUBLE PRECISION,
     FOREIGN KEY (member_id) REFERENCES members(id) ON DELETE CASCADE,
     UNIQUE(member_id, year, month)
   )`,
@@ -156,6 +183,9 @@ const POSTGRES_SCHEMAS = [
     installments_total INTEGER NOT NULL,
     installments_paid INTEGER DEFAULT 0,
     remaining_balance DOUBLE PRECISION NOT NULL,
+    loan_taken_on VARCHAR(20),
+    guarantor1_name VARCHAR(255),
+    guarantor2_name VARCHAR(255),
     FOREIGN KEY (member_id) REFERENCES members(id) ON DELETE CASCADE
   )`,
   `CREATE TABLE IF NOT EXISTS backups (
@@ -191,13 +221,34 @@ export async function initDatabase() {
 
 // Adds columns to tables that already existed before this column was introduced
 async function runMigrations() {
-  try {
-    const alterSql = isPostgres
-      ? "ALTER TABLE board_members ADD COLUMN IF NOT EXISTS photo_url TEXT"
-      : "ALTER TABLE board_members ADD COLUMN photo_url TEXT";
-    await run(alterSql);
-  } catch (err) {
-    // SQLite has no "ADD COLUMN IF NOT EXISTS" — ignore "duplicate column" on repeat runs
+  const columnAdditions = [
+    ['board_members', 'photo_url', 'TEXT'],
+    ['members', 'savings_balance', isPostgres ? 'DOUBLE PRECISION' : 'REAL'],
+    ['members', 'savings_balance_date', isPostgres ? 'VARCHAR(20)' : 'TEXT'],
+    ['members', 'share_amount', isPostgres ? 'DOUBLE PRECISION' : 'REAL'],
+    ['members', 'share_certificate_no', isPostgres ? 'VARCHAR(50)' : 'TEXT'],
+    ['members', 'interim_balance', isPostgres ? 'DOUBLE PRECISION' : 'REAL'],
+    ['members', 'interim_balance_date', isPostgres ? 'VARCHAR(20)' : 'TEXT'],
+    ['members', 'bonus_amount', isPostgres ? 'DOUBLE PRECISION' : 'REAL'],
+    ['members', 'current_balance', isPostgres ? 'DOUBLE PRECISION' : 'REAL'],
+    ['members', 'current_balance_date', isPostgres ? 'VARCHAR(20)' : 'TEXT'],
+    ['loans', 'loan_taken_on', isPostgres ? 'VARCHAR(20)' : 'TEXT'],
+    ['loans', 'guarantor1_name', isPostgres ? 'VARCHAR(255)' : 'TEXT'],
+    ['loans', 'guarantor2_name', isPostgres ? 'VARCHAR(255)' : 'TEXT'],
+    ['receipts', 'receipt_no', isPostgres ? 'VARCHAR(50)' : 'TEXT'],
+    ['receipts', 'loan_balance_before', isPostgres ? 'DOUBLE PRECISION' : 'REAL'],
+    ['receipts', 'loan_balance_after', isPostgres ? 'DOUBLE PRECISION' : 'REAL']
+  ];
+
+  for (const [table, column, type] of columnAdditions) {
+    try {
+      const alterSql = isPostgres
+        ? `ALTER TABLE ${table} ADD COLUMN IF NOT EXISTS ${column} ${type}`
+        : `ALTER TABLE ${table} ADD COLUMN ${column} ${type}`;
+      await run(alterSql);
+    } catch (err) {
+      // SQLite has no "ADD COLUMN IF NOT EXISTS" — ignore "duplicate column" on repeat runs
+    }
   }
 }
 
@@ -492,6 +543,126 @@ export async function importRecords(records) {
   }
 
   return { membersInserted, receiptsInserted, errors };
+}
+
+// Imports the structured output of societyParser.js's parseSocietyWorkbook().
+// Upserts members (matched by staff_no = LF No), their current loan (a
+// single row per member tagged loan_type='Society Loan', so this never
+// touches loans entered through other means), and their monthly receipts.
+// Members referenced only in the ledger (former/exited members not in the
+// current roster) are created as INACTIVE so their history still resolves.
+export async function importSocietyWorkbook(parsed) {
+  const stats = {
+    membersInserted: 0, membersUpdated: 0,
+    loansInserted: 0, loansUpdated: 0,
+    receiptsUpserted: 0,
+    orphanMembersCreated: 0,
+    errors: []
+  };
+
+  for (const m of parsed.members) {
+    try {
+      const existing = await get("SELECT id FROM members WHERE staff_no = $1", [m.staffNo]);
+      const fields = [m.name, m.phone, m.savingsBalance, m.savingsBalanceDate, m.shareAmount, m.shareCertificateNo, m.interimBalance, m.interimBalanceDate, m.bonusAmount, m.currentBalance, m.currentBalanceDate];
+
+      if (existing) {
+        await run(
+          `UPDATE members SET name=$1, phone=$2, savings_balance=$3, savings_balance_date=$4, share_amount=$5, share_certificate_no=$6, interim_balance=$7, interim_balance_date=$8, bonus_amount=$9, current_balance=$10, current_balance_date=$11 WHERE id=$12`,
+          [...fields, existing.id]
+        );
+        stats.membersUpdated++;
+      } else {
+        await run(
+          `INSERT INTO members (staff_no, name, phone, savings_balance, savings_balance_date, share_amount, share_certificate_no, interim_balance, interim_balance_date, bonus_amount, current_balance, current_balance_date) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
+          [m.staffNo, ...fields]
+        );
+        stats.membersInserted++;
+      }
+
+      if (m.hasLoan) {
+        const memberRow = await get("SELECT id FROM members WHERE staff_no = $1", [m.staffNo]);
+        const existingLoan = await get("SELECT id FROM loans WHERE member_id = $1 AND loan_type = $2", [memberRow.id, 'Society Loan']);
+        if (existingLoan) {
+          await run(
+            `UPDATE loans SET loan_amount=$1, loan_taken_on=$2, guarantor1_name=$3, guarantor2_name=$4 WHERE id=$5`,
+            [m.loanAmount, m.loanTakenOn, m.guarantor1Name, m.guarantor2Name, existingLoan.id]
+          );
+          stats.loansUpdated++;
+        } else {
+          await run(
+            `INSERT INTO loans (member_id, loan_type, loan_amount, interest_rate, installments_total, installments_paid, remaining_balance, loan_taken_on, guarantor1_name, guarantor2_name) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
+            [memberRow.id, 'Society Loan', m.loanAmount, 0, 0, 0, m.loanAmount, m.loanTakenOn, m.guarantor1Name, m.guarantor2Name]
+          );
+          stats.loansInserted++;
+        }
+      }
+    } catch (err) {
+      stats.errors.push(`member ${m.staffNo} (${m.name}): ${err.message}`);
+    }
+  }
+
+  for (const o of parsed.orphanMembers) {
+    try {
+      const existing = await get("SELECT id FROM members WHERE staff_no = $1", [o.staffNo]);
+      if (!existing) {
+        await run("INSERT INTO members (staff_no, name, status) VALUES ($1, $2, 'INACTIVE')", [o.staffNo, o.name]);
+        stats.orphanMembersCreated++;
+      }
+    } catch (err) {
+      stats.errors.push(`orphan member ${o.staffNo} (${o.name}): ${err.message}`);
+    }
+  }
+
+  for (const r of parsed.receipts) {
+    try {
+      const memberRow = await get("SELECT id FROM members WHERE staff_no = $1", [r.staffNo]);
+      if (!memberRow) {
+        stats.errors.push(`receipt for LF ${r.staffNo} ${r.year}-${r.month}: member not found (not in members details or orphan list)`);
+        continue;
+      }
+
+      const receiptInsertSql = isPostgres
+        ? `INSERT INTO receipts (member_id, year, month, total_recovered, savings_deposit, loan_recovery, interest_recovery, receipt_no, loan_balance_before, loan_balance_after)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+           ON CONFLICT (member_id, year, month) DO UPDATE SET
+             total_recovered = EXCLUDED.total_recovered,
+             savings_deposit = EXCLUDED.savings_deposit,
+             loan_recovery = EXCLUDED.loan_recovery,
+             interest_recovery = EXCLUDED.interest_recovery,
+             receipt_no = EXCLUDED.receipt_no,
+             loan_balance_before = EXCLUDED.loan_balance_before,
+             loan_balance_after = EXCLUDED.loan_balance_after`
+        : `INSERT OR REPLACE INTO receipts (member_id, year, month, total_recovered, savings_deposit, loan_recovery, interest_recovery, receipt_no, loan_balance_before, loan_balance_after)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`;
+
+      await run(receiptInsertSql, [memberRow.id, r.year, r.month, r.totalRecovered, r.savingsDeposit, r.loanRecovery, r.interestRecovery, r.receiptNo, r.loanBalanceBefore, r.loanBalanceAfter]);
+      stats.receiptsUpserted++;
+    } catch (err) {
+      stats.errors.push(`receipt for LF ${r.staffNo} ${r.year}-${r.month}: ${err.message}`);
+    }
+  }
+
+  // The ledger's per-month balanceAfter is a far more accurate "current
+  // outstanding balance" than the static LOAN AMOUNT snapshot from members
+  // details, so sync remaining_balance to the most recent receipt on file.
+  for (const m of parsed.members) {
+    if (!m.hasLoan) continue;
+    try {
+      const memberRow = await get("SELECT id FROM members WHERE staff_no = $1", [m.staffNo]);
+      if (!memberRow) continue;
+      const latest = await get(
+        "SELECT loan_balance_after FROM receipts WHERE member_id = $1 AND loan_balance_after IS NOT NULL ORDER BY year DESC, month DESC LIMIT 1",
+        [memberRow.id]
+      );
+      if (latest && latest.loan_balance_after !== null && latest.loan_balance_after !== undefined) {
+        await run("UPDATE loans SET remaining_balance = $1 WHERE member_id = $2 AND loan_type = $3", [latest.loan_balance_after, memberRow.id, 'Society Loan']);
+      }
+    } catch (err) {
+      stats.errors.push(`syncing remaining_balance for ${m.staffNo}: ${err.message}`);
+    }
+  }
+
+  return stats;
 }
 
 // Fallback compatibility export

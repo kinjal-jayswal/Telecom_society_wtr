@@ -1,56 +1,65 @@
-import nodemailer from 'nodemailer';
+import { Resend } from 'resend';
 
-// Generic SMTP config so this works with a Gmail App Password, or any other
-// SMTP provider, without hardcoding to one vendor's API.
+// Uses Resend's HTTP API rather than raw SMTP. Railway (like most PaaS
+// providers) blocks/throttles outbound SMTP to prevent abuse, and Gmail
+// separately tends to reject or throttle connections from shared cloud IP
+// ranges — a plain HTTPS API call sidesteps both problems.
 export function isEmailConfigured() {
-  return !!(process.env.SMTP_HOST && process.env.SMTP_USER && process.env.SMTP_PASS);
+  return !!(process.env.RESEND_API_KEY && process.env.BACKUP_EMAIL_TO);
 }
 
-function getTransporter() {
-  if (!isEmailConfigured()) return null;
-  const port = parseInt(process.env.SMTP_PORT || '587', 10);
-  return nodemailer.createTransport({
-    host: process.env.SMTP_HOST,
-    port,
-    secure: port === 465,
-    auth: {
-      user: process.env.SMTP_USER,
-      pass: process.env.SMTP_PASS
-    }
-  });
+function getClient() {
+  if (!process.env.RESEND_API_KEY) return null;
+  return new Resend(process.env.RESEND_API_KEY);
 }
 
-function getRecipient() {
-  return process.env.BACKUP_EMAIL_TO || process.env.SMTP_USER;
+function getSender() {
+  // onboarding@resend.dev works without verifying a custom domain — fine
+  // for this volume (one email per fortnight). Override with
+  // BACKUP_EMAIL_FROM once a verified sending domain is set up.
+  return process.env.BACKUP_EMAIL_FROM || 'ATD Society Backups <onboarding@resend.dev>';
 }
 
 export async function sendBackupEmail(jsonText, filename) {
-  const transporter = getTransporter();
-  if (!transporter) {
-    throw new Error('Email is not configured (SMTP_HOST/SMTP_USER/SMTP_PASS missing).');
-  }
+  const client = getClient();
+  if (!client) throw new Error('Email is not configured (RESEND_API_KEY missing).');
+  const to = process.env.BACKUP_EMAIL_TO;
+  if (!to) throw new Error('BACKUP_EMAIL_TO is not set — no recipient configured.');
 
-  await transporter.sendMail({
-    from: process.env.SMTP_FROM || process.env.SMTP_USER,
-    to: getRecipient(),
+  const { error } = await client.emails.send({
+    from: getSender(),
+    to,
     subject: `ATD Society Database Backup — ${new Date().toLocaleDateString()}`,
     text: `Automated database backup attached (${filename}).\n\nIf the database is ever lost, this file can be restored from Admin Panel -> Backups tab -> "Restore from Backup File".`,
     attachments: [
-      { filename, content: jsonText, contentType: 'application/json' }
+      { filename, content: Buffer.from(jsonText).toString('base64') }
     ]
   });
+
+  if (error) throw new Error(error.message || JSON.stringify(error));
 }
 
-// Sends no mail — just authenticates against the SMTP server so the admin
-// can confirm the credentials actually work before relying on them.
+// Sends a real (harmless) test email so the admin can confirm the API key,
+// sender, and recipient actually work end-to-end.
 export async function testEmailConnection() {
-  const transporter = getTransporter();
-  if (!transporter) {
-    return { ok: false, error: 'Email is not configured (SMTP_HOST/SMTP_USER/SMTP_PASS missing).' };
+  const client = getClient();
+  if (!client) {
+    return { ok: false, error: 'Email is not configured (RESEND_API_KEY missing).' };
   }
+  const to = process.env.BACKUP_EMAIL_TO;
+  if (!to) {
+    return { ok: false, error: 'BACKUP_EMAIL_TO is not set — no recipient configured.' };
+  }
+
   try {
-    await transporter.verify();
-    return { ok: true, to: getRecipient() };
+    const { data, error } = await client.emails.send({
+      from: getSender(),
+      to,
+      subject: 'ATD Society Backup — Test Connection',
+      text: 'This confirms the backup email connection works. No backup data is attached to this message.'
+    });
+    if (error) return { ok: false, error: error.message || JSON.stringify(error) };
+    return { ok: true, to, id: data?.id };
   } catch (err) {
     return { ok: false, error: err.message };
   }

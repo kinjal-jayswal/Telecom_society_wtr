@@ -81,6 +81,14 @@ export default function App() {
   const [uploadError, setUploadError] = useState('');
   const [uploadUsedAI, setUploadUsedAI] = useState(false);
 
+  // Society Workbook Importer State (the "members details" + "ledger" format)
+  const [societyFile, setSocietyFile] = useState(null);
+  const [societyPreviewLoading, setSocietyPreviewLoading] = useState(false);
+  const [societyPreview, setSocietyPreview] = useState(null);
+  const [societyImporting, setSocietyImporting] = useState(false);
+  const [societyImportResult, setSocietyImportResult] = useState(null);
+  const [societyError, setSocietyError] = useState('');
+
   // AI-Assisted Parsing (Claude) State
   const [aiStatus, setAiStatus] = useState({ configured: false, model: '', enabled: false });
   const [aiToggleLoading, setAiToggleLoading] = useState(false);
@@ -548,6 +556,68 @@ export default function App() {
       setUploadError('Network error uploading file.');
     } finally {
       setUploadLoading(false);
+    }
+  };
+
+  // Preview the "members details" + "ledger" workbook format without
+  // writing anything to the database — always run this before importing.
+  const handlePreviewSocietyWorkbook = async () => {
+    if (!societyFile) {
+      setSocietyError('Select a workbook file first.');
+      return;
+    }
+    setSocietyPreviewLoading(true);
+    setSocietyError('');
+    setSocietyPreview(null);
+    setSocietyImportResult(null);
+
+    const formData = new FormData();
+    formData.append('file', societyFile);
+
+    try {
+      const res = await fetch('/api/upload-data/society-workbook?dryRun=true', { method: 'POST', body: formData });
+      const data = await res.json();
+      if (res.ok) {
+        setSocietyPreview(data);
+      } else {
+        setSocietyError(data.error || 'Failed to preview file.');
+      }
+    } catch (err) {
+      setSocietyError('Network error previewing file.');
+    } finally {
+      setSocietyPreviewLoading(false);
+    }
+  };
+
+  // Actually writes the previewed workbook's data into the database.
+  // Only enabled after a preview has been reviewed.
+  const handleConfirmSocietyImport = async () => {
+    if (!societyFile || !societyPreview) return;
+    if (!confirm(`Import ${societyPreview.memberCount} members and ${societyPreview.receiptCount} receipts into the live database? This adds/updates records — it does not delete anything.`)) {
+      return;
+    }
+
+    setSocietyImporting(true);
+    setSocietyError('');
+
+    const formData = new FormData();
+    formData.append('file', societyFile);
+
+    try {
+      const res = await fetch('/api/upload-data/society-workbook', { method: 'POST', body: formData });
+      const data = await res.json();
+      if (res.ok) {
+        setSocietyImportResult(data);
+        setSocietyPreview(null);
+        setSocietyFile(null);
+        fetchMembers();
+      } else {
+        setSocietyError(data.error || 'Failed to import file.');
+      }
+    } catch (err) {
+      setSocietyError('Network error importing file.');
+    } finally {
+      setSocietyImporting(false);
     }
   };
 
@@ -1436,6 +1506,83 @@ export default function App() {
                           </div>
                         )}
                       </div>
+                    </div>
+
+                    {/* Society Workbook Importer (members details + ledger format) */}
+                    <div className="glass-panel" style={{ padding: '24px', marginBottom: '24px' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '16px', borderBottom: '1px solid var(--surface-border)', paddingBottom: '12px' }}>
+                        <Database size={20} style={{ color: 'var(--secondary)' }} />
+                        <h3 style={{ fontSize: '18px' }}>Import Society Workbook</h3>
+                      </div>
+
+                      <p style={{ fontSize: '13px', color: 'var(--text-secondary)', marginBottom: '16px' }}>
+                        For the specific "members details" + "ledger" workbook format the society office maintains manually — not the generic CSV/Excel template above. Always preview before importing.
+                      </p>
+
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '16px', flexWrap: 'wrap' }}>
+                        <input
+                          type="file"
+                          accept=".xlsx,.xls"
+                          onChange={(e) => { setSocietyFile(e.target.files[0]); setSocietyPreview(null); setSocietyImportResult(null); setSocietyError(''); }}
+                          style={{ fontSize: '13px' }}
+                        />
+                        <button
+                          type="button"
+                          className="btn-secondary"
+                          style={{ fontSize: '13px', padding: '8px 16px' }}
+                          onClick={handlePreviewSocietyWorkbook}
+                          disabled={societyPreviewLoading || !societyFile}
+                        >
+                          {societyPreviewLoading ? 'Previewing...' : 'Preview (Dry Run)'}
+                        </button>
+                      </div>
+
+                      {societyError && (
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', background: 'rgba(239, 68, 68, 0.1)', border: '1px solid rgba(239, 68, 68, 0.2)', padding: '12px', borderRadius: '8px', color: 'var(--accent-red)', marginBottom: '16px' }}>
+                          <AlertTriangle size={16} />
+                          <span style={{ fontSize: '13px' }}>{societyError}</span>
+                        </div>
+                      )}
+
+                      {societyPreview && (
+                        <div style={{ background: 'rgba(59, 130, 246, 0.05)', border: '1px solid rgba(59, 130, 246, 0.2)', padding: '16px', borderRadius: '8px', marginBottom: '16px' }}>
+                          <strong style={{ fontSize: '13px', display: 'block', marginBottom: '10px' }}>Preview — nothing has been written yet</strong>
+                          <div style={{ display: 'flex', gap: '24px', marginBottom: '10px', flexWrap: 'wrap' }}>
+                            <span style={{ fontSize: '13px' }}><strong>{societyPreview.memberCount}</strong> members</span>
+                            <span style={{ fontSize: '13px' }}><strong>{societyPreview.receiptCount}</strong> receipts</span>
+                            <span style={{ fontSize: '13px' }}><strong>{societyPreview.orphanMembers?.length || 0}</strong> former/orphan members</span>
+                          </div>
+                          {societyPreview.issues && societyPreview.issues.length > 0 && (
+                            <div style={{ marginBottom: '12px' }}>
+                              <span style={{ fontSize: '12px', fontWeight: '600', color: 'var(--accent-gold)', display: 'block', marginBottom: '4px' }}>Flagged for review:</span>
+                              <ul style={{ fontSize: '12px', color: 'var(--text-secondary)', paddingLeft: '18px', margin: 0 }}>
+                                {societyPreview.issues.map((issue, idx) => <li key={idx} style={{ marginBottom: '4px' }}>{issue}</li>)}
+                              </ul>
+                            </div>
+                          )}
+                          <button
+                            type="button"
+                            className="btn-primary"
+                            style={{ fontSize: '13px', padding: '8px 16px' }}
+                            onClick={handleConfirmSocietyImport}
+                            disabled={societyImporting}
+                          >
+                            {societyImporting ? 'Importing...' : 'Confirm & Import'}
+                          </button>
+                        </div>
+                      )}
+
+                      {societyImportResult && (
+                        <div style={{ display: 'flex', alignItems: 'flex-start', gap: '8px', background: 'rgba(16, 185, 129, 0.1)', border: '1px solid rgba(16, 185, 129, 0.2)', padding: '12px', borderRadius: '8px', color: 'var(--secondary)' }}>
+                          <CheckCircle2 size={16} style={{ marginTop: '2px', flexShrink: 0 }} />
+                          <span style={{ fontSize: '13px' }}>
+                            Imported — {societyImportResult.stats.membersInserted} new / {societyImportResult.stats.membersUpdated} updated members,{' '}
+                            {societyImportResult.stats.loansInserted} new / {societyImportResult.stats.loansUpdated} updated loans,{' '}
+                            {societyImportResult.stats.receiptsUpserted} receipts, {societyImportResult.stats.orphanMembersCreated} former members added as inactive.
+                            {societyImportResult.stats.errors.length > 0 && ` ${societyImportResult.stats.errors.length} row(s) failed — check server logs.`}
+                          </span>
+                        </div>
+                      )}
                     </div>
 
                     {/* Member Directory Panel */}

@@ -40,7 +40,20 @@ There is no test suite, linter, or type checker configured in this repo (no `tes
 
 `POST /api/upload-data` accepts CSV, XLSX/XLS, or PDF. CSV always uses the deterministic `parseCSV` (header-based). For XLSX/PDF, when AI parsing is enabled (see below) it calls `aiExtractRecords()` in [aiParser.js](aiParser.js) instead of the fixed-format `parseExcel`/`parsePDF` (regex line-matching); on any AI failure it falls back to the fixed-format parser automatically and reports `aiError` in the response. `importRecords()` in database.js then upserts members and receipts, tolerating multiple possible column-name aliases per field (e.g. `staffno`/`staff_no`/`hrms`/`staff_id`) — this is why the AI tool schema's field names (`staffno`, `savingsdeposit`, ...) were chosen to match those aliases directly.
 
-**`xlsx` ESM import gotcha**: `import * as xlsx from 'xlsx'` does *not* expose `readFile`/`writeFile` as named exports (only `read`/`write`/`utils` are real named exports; `readFile`/`writeFile` live on the CJS `default` only). Always read the file into a buffer and call `xlsx.read(buffer, { type: 'buffer' })` (see `readWorkbook()` in server.js) — calling `xlsx.readFile()` directly throws `xlsx.readFile is not a function` at runtime, not at build time, so this is easy to miss without an actual upload test.
+**`xlsx` ESM import gotcha**: `import * as xlsx from 'xlsx'` does *not* expose `readFile`/`writeFile`/`SSF` as named exports (only `read`/`write`/`utils` are real named exports; everything else, including the date-serial formatter `SSF`, lives on the CJS `default` only). Always read the file into a buffer and call `xlsx.read(buffer, { type: 'buffer' })` (see `readWorkbook()` in server.js), and grab `SSF` via `xlsx.SSF || xlsx.default.SSF` (see societyParser.js) — calling `xlsx.readFile()` or `xlsx.SSF.parse_date_code()` directly throws at runtime, not at build time, so this is easy to miss without an actual upload test.
+
+### Society workbook importer (real-world manual format)
+
+ATD Credit & Supply Society maintains their real records manually as a 4-sheet Excel workbook (not the flat CSV template above). [societyParser.js](societyParser.js)'s `parseSocietyWorkbook()` is a purpose-built parser for two of those sheets specifically:
+- **"members details"**: the member roster. `LF No` is their account identifier — reused directly as `members.staff_no` (no rename) to avoid rewiring receipt search / the WhatsApp bot / every other flow built around that column. Three distinct "balance as of X" figures exist per member (`interim_balance`, `bonus_amount`, `current_balance`) — don't conflate them, they come from three separately-labeled source columns.
+- **"ledger"**: monthly loan repayment history, structured as *repeating blocks per member* (not flat rows) — the member's LF No is embedded in free text like `" KIRTI A MAKWANA   LF-73   PAGE-03"` and extracted via regex. There's no monthly savings figure in this sheet at all (savings is a running balance on the member, not a transaction) — imported receipts always get `savings_deposit = 0`.
+- **"Bank pass-book"** and **"Loan details"** are intentionally out of scope: the former is the society's own bank reconciliation (not member data), and the latter has no reliable per-row LF No to join on (only free-text names), so blind name-matching risked assigning guarantor data to the wrong person.
+
+The source ledger sometimes has multiple rows landing in the same member-month (legitimate multi-payment loan closures, and occasionally what looks like a date-entry mistake reusing an earlier date) — `parseSocietyWorkbook()` sums them into one receipt rather than crashing on the `receipts` UNIQUE(member_id, year, month) constraint, and reports every occurrence in `issues` for manual review.
+
+`importSocietyWorkbook()` in database.js writes the parsed result: members upserted by `staff_no`; each member's current loan tagged `loan_type = 'Society Loan'` (so this importer never touches loans entered another way) with `remaining_balance` synced to their *most recent receipt's* `loan_balance_after` after all receipts land, since that's more accurate than the static loan-amount snapshot; members referenced only in the ledger (former/exited members not in the current roster) are created `status = 'INACTIVE'`.
+
+`POST /api/upload-data/society-workbook?dryRun=true` parses and returns a full preview (counts + `issues`) without writing anything — always run this before the real import (no `dryRun` param) given this handles real financial data for real people.
 
 ### AI-assisted parsing (Claude)
 
@@ -50,9 +63,13 @@ There is no test suite, linter, or type checker configured in this repo (no `tes
 
 `GET /api/ai-status` exposes `{ configured, model, enabled }` (never the key itself) and `POST /api/ai-status/test` makes one live, cheap Claude call so the admin can verify the key/model actually work, not just that a string is set. `ANTHROPIC_MODEL` overrides the default model (`claude-sonnet-5`).
 
-### Backups
+### Backups (offsite: bucket + email, plus restore)
 
-`backupService.js` copies the SQLite file to `backups/` on a fortnightly `setInterval` and on manual trigger (`POST /api/backups/run`); every backup is logged to the `backups` table via `addBackupLog`. In Postgres mode, `performBackup()` does not copy any file — it just logs a virtual entry, since actual backups are assumed to be handled by the cloud provider. `GET /api/backups/export` is the DB-agnostic alternative: a full JSON dump of every table.
+`backupService.js`'s `performBackup()` runs on a fortnightly `setInterval` and on manual trigger (`POST /api/backups/run`). It always builds a full JSON snapshot via `getFullState()` and, when configured, uploads it to a Railway object storage bucket (`BACKUP_BUCKET_*` env vars, S3-compatible, via `@aws-sdk/client-s3`) and/or emails it (`emailService.js`, Resend's HTTP API — **not SMTP**, since Railway blocks/throttles outbound SMTP and Gmail tends to reject shared cloud IPs regardless). Both destinations are optional/independent; `isBucketConfigured()`/`isEmailConfigured()` gate them and everything degrades gracefully to a no-op when unset, same pattern as AI parsing. `GET /api/backups/status` exposes which destinations are configured (never the credentials); `POST /api/backups/status/test-email` sends a real test email.
+
+In SQLite mode, the historical local-file-copy behavior is *also* kept for backward compatibility (there's no persistent volume on the Railway app service, so this only matters for local dev — in Postgres/production, the JSON snapshot is the entire backup). `GET /api/backups/download/:filename` checks the local `backups/` dir first, then falls back to the bucket, since Postgres-mode backups only ever exist in the bucket/email, never on local disk.
+
+`POST /api/backups/import` (`importFullState()` in database.js) is the restore path for the JSON export/backup: it's destructive (clears every table, then re-inserts the backup's rows preserving original IDs so `receipts`/`loans` → `members` foreign keys stay intact), not wrapped in a DB transaction (consistent with the rest of this file), and resyncs Postgres `SERIAL` sequences afterward since explicit-ID inserts don't advance them automatically.
 
 ### Admin auth is client-side only
 
@@ -70,5 +87,7 @@ There is no test suite, linter, or type checker configured in this repo (no `tes
 | `DATABASE_URL` | If set, switches `database.js` to PostgreSQL |
 | `ANTHROPIC_API_KEY` | Enables AI-assisted PDF/Excel parsing (still needs the `ai_parsing_enabled` setting on to actually be used) |
 | `ANTHROPIC_MODEL` | Overrides the default Claude model (`claude-sonnet-5`) used for parsing and the connection test |
+| `BACKUP_BUCKET_ENDPOINT`, `BACKUP_BUCKET_ACCESS_KEY`, `BACKUP_BUCKET_SECRET_KEY`, `BACKUP_BUCKET_NAME`, `BACKUP_BUCKET_REGION` | Railway bucket (S3-compatible) that backups upload to |
+| `RESEND_API_KEY`, `BACKUP_EMAIL_TO`, `BACKUP_EMAIL_FROM` | Resend HTTP API config that backups get emailed through |
 
 Local dev loads these from `.env` via `dotenv/config` (see [.env.example](.env.example)); Railway injects them directly, no `.env` involved.

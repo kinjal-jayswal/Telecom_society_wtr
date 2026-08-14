@@ -84,6 +84,8 @@ Copy [.env.example](.env.example) to `.env` for local development (loaded automa
 | `DATABASE_URL` | If set, connects to PostgreSQL instead of local SQLite |
 | `ANTHROPIC_API_KEY` | Enables AI-assisted PDF/Excel parsing. Without it, `/api/ai-status` reports `configured: false` and uploads always use the standard parser regardless of the admin toggle. |
 | `ANTHROPIC_MODEL` | Optional — defaults to `claude-sonnet-5` |
+| `BACKUP_BUCKET_ENDPOINT`, `BACKUP_BUCKET_ACCESS_KEY`, `BACKUP_BUCKET_SECRET_KEY`, `BACKUP_BUCKET_NAME`, `BACKUP_BUCKET_REGION` | Enables uploading each backup's JSON snapshot to a Railway object storage bucket (S3-compatible), independent of the app's own database |
+| `RESEND_API_KEY`, `BACKUP_EMAIL_TO`, `BACKUP_EMAIL_FROM` | Enables emailing each backup's JSON snapshot via [Resend](https://resend.com)'s HTTP API (not SMTP — Railway blocks/throttles outbound SMTP, and Gmail tends to reject shared cloud IPs) |
 
 AI parsing also requires the admin toggle at Admin Panel → Upload tab → "AI-Assisted Parsing (Claude)" to be turned on (persisted as the `ai_parsing_enabled` setting) — having the API key alone doesn't turn it on for uploads.
 
@@ -101,10 +103,15 @@ Tables: `members`, `receipts`, `loans`, `board_members`, `settings`, `backups`. 
 | GET/POST | `/api/settings` | Read/update society settings |
 | GET/POST/PUT/DELETE | `/api/board` | Board of Directors CRUD |
 | GET | `/api/backups` | List backup log entries |
-| POST | `/api/backups/run` | Trigger a manual backup |
-| GET | `/api/backups/download/:filename` | Download a backup file |
+| POST | `/api/backups/run` | Trigger a manual backup (also uploads to the bucket/emails if configured) |
+| GET | `/api/backups/download/:filename` | Download a backup file (local SQLite copy, falling back to the bucket) |
 | GET | `/api/backups/export` | Export full DB state as JSON |
+| POST | `/api/backups/import` | Restore the database from a previously exported JSON file (destructive — clears each table first) |
+| GET | `/api/backups/status` | Whether the offsite bucket/email destinations are configured |
+| POST | `/api/backups/status/test-email` | Sends a real test email to verify Resend is working |
 | POST | `/api/upload-data` | Upload & import CSV/Excel/PDF member data (AI-assisted when enabled) |
+| POST | `/api/upload-data/society-workbook?dryRun=true\|false` | Import the specific "members details" + "ledger" workbook format the society maintains manually (dry run previews without writing) |
+| GET | `/api/upload-data/template?format=csv\|xlsx` | Download a blank upload template with the correct column headers |
 | GET | `/api/ai-status` | Whether an Anthropic API key is configured, the model, and whether AI parsing is enabled |
 | POST | `/api/ai-status/test` | Runs a live round-trip call to Claude to verify the key/model work |
 | POST | `/api/whatsapp/webhook` | Simulated WhatsApp bot (`receipt`, `loans`, `summary`, `help`) |
@@ -112,4 +119,4 @@ Tables: `members`, `receipts`, `loans`, `board_members`, `settings`, `backups`. 
 ## Notes
 
 - `site_home.html` and `receipt_search.html` are static pages scraped from the original society website (via `test.py`) and kept as design/content reference — they are not served by the app.
-- Backups are file-copy based for SQLite; for PostgreSQL, backups are assumed to be managed by the cloud provider and only logged.
+- SQLite mode also keeps a local file-copy backup (`backups/`) for backward compatibility, but the JSON snapshot uploaded to the bucket/emailed is the actual disaster-recovery backup in Postgres mode (production), since Railway's app filesystem isn't persistent across deploys.
