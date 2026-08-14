@@ -75,6 +75,8 @@ export default function App() {
   const [searchNoLoanMember, setSearchNoLoanMember] = useState(null);
   const [searchMultipleMatches, setSearchMultipleMatches] = useState(null);
   const [searchLoading, setSearchLoading] = useState(false);
+  const [searchSuggestions, setSearchSuggestions] = useState([]);
+  const [showSuggestions, setShowSuggestions] = useState(false);
 
   // Admin Data Upload State
   const [uploadFile, setUploadFile] = useState(null);
@@ -147,6 +149,26 @@ export default function App() {
       chatEndRef.current.scrollIntoView({ behavior: 'smooth' });
     }
   }, [chatMessages, isTyping]);
+
+  // Live autocomplete for the receipt search field — debounced so it
+  // doesn't fire a request on every keystroke.
+  useEffect(() => {
+    if (!searchStaffNo || searchStaffNo.trim().length < 2) {
+      setSearchSuggestions([]);
+      return;
+    }
+    const handle = setTimeout(async () => {
+      try {
+        const res = await fetch(`/api/members/search?q=${encodeURIComponent(searchStaffNo)}`);
+        const data = await res.json();
+        if (res.ok) setSearchSuggestions(data);
+      } catch (err) {
+        // Live suggestions are a convenience — fail silently and let the
+        // normal Search Receipt submit surface any real error.
+      }
+    }, 300);
+    return () => clearTimeout(handle);
+  }, [searchStaffNo]);
 
   const fetchSettings = async () => {
     try {
@@ -487,10 +509,14 @@ export default function App() {
     }
   };
 
-  // A member picked their name from the disambiguation list — lock the
-  // search field to their exact Staff/HRMS No. and re-search immediately.
+  // A member picked their name — either from the live autocomplete
+  // dropdown while typing, or the post-search disambiguation list. Either
+  // way: lock the search field to their exact Staff/HRMS No. and
+  // re-search immediately.
   const handleSelectMatch = (staffNo) => {
     setSearchStaffNo(staffNo);
+    setSearchSuggestions([]);
+    setShowSuggestions(false);
     handleReceiptSearch(null, staffNo);
   };
 
@@ -1107,7 +1133,7 @@ export default function App() {
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '16px' }}>
                   
                   {/* Staff Number / Phone / Name */}
-                  <div>
+                  <div style={{ position: 'relative' }}>
                     <label style={{ fontSize: '13px', color: 'var(--text-secondary)', display: 'block', marginBottom: '6px', fontWeight: '500' }}>
                       Staff / HRMS No., Phone, or Name
                     </label>
@@ -1116,8 +1142,26 @@ export default function App() {
                       placeholder="e.g. 1001, phone number, or name"
                       className="form-input"
                       value={searchStaffNo}
-                      onChange={(e) => setSearchStaffNo(e.target.value)}
+                      autoComplete="off"
+                      onChange={(e) => { setSearchStaffNo(e.target.value); setShowSuggestions(true); }}
+                      onFocus={() => setShowSuggestions(true)}
+                      onBlur={() => setTimeout(() => setShowSuggestions(false), 150)}
                     />
+                    {showSuggestions && searchSuggestions.length > 0 && (
+                      <div style={{ position: 'absolute', top: '100%', left: 0, right: 0, marginTop: '4px', background: '#fff', border: '1px solid var(--surface-border)', borderRadius: '8px', boxShadow: '0 10px 25px -5px rgba(0,0,0,0.15)', zIndex: 20, maxHeight: '220px', overflowY: 'auto' }}>
+                        {searchSuggestions.map((m) => (
+                          <button
+                            key={m.staffNo}
+                            type="button"
+                            onMouseDown={() => handleSelectMatch(m.staffNo)}
+                            style={{ display: 'flex', justifyContent: 'space-between', width: '100%', padding: '10px 12px', background: 'none', border: 'none', borderBottom: '1px solid var(--surface-border)', cursor: 'pointer', fontSize: '13px', textAlign: 'left', color: '#0f172a' }}
+                          >
+                            <span>{m.name}</span>
+                            <span style={{ color: 'var(--text-secondary)' }}>{m.staffNo}</span>
+                          </button>
+                        ))}
+                      </div>
+                    )}
                   </div>
 
                   {/* Year */}

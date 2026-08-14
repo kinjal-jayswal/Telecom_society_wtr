@@ -97,6 +97,21 @@ app.get('/api/members', async (req, res) => {
   }
 });
 
+// Lightweight live-typing suggestions for the receipt search box (name/
+// phone/Staff No matches) — no year/month needed, just candidate members.
+app.get('/api/members/search', async (req, res) => {
+  const q = (req.query.q || '').trim();
+  if (q.length < 2) {
+    return res.json([]);
+  }
+  try {
+    const matches = await findMembersByIdentifier(q);
+    res.json(matches.slice(0, 8).map((m) => ({ staffNo: m.staff_no, name: m.name })));
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // 2. Receipt Search API (Public / Member use)
 app.get('/api/receipts/search', async (req, res) => {
   const { account, year, month } = req.query;
