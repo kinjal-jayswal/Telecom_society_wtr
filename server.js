@@ -530,7 +530,8 @@ app.post('/api/upload-data/society-workbook', upload.single('file'), async (req,
         orphanMembers: parsed.orphanMembers,
         issues: parsed.issues,
         sampleMembers: parsed.members.slice(0, 5),
-        sampleReceipts: parsed.receipts.slice(0, 5)
+        sampleReceipts: parsed.receipts.slice(0, 5),
+        otherSheets: parsed.otherSheets
       });
     }
 

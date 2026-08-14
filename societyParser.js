@@ -31,9 +31,32 @@ function extractDateFromHeaderText(text) {
   return `${m[3]}-${m[2].padStart(2, '0')}-${m[1].padStart(2, '0')}`;
 }
 
+// Sheets like "Bank pass-book" and "Loan details" are never parsed into
+// structured data (see CLAUDE.md — no reliable join key, or not member
+// data at all), but the admin still has no way to even look at what's in
+// them. This returns their raw grid contents (capped) purely for display
+// in the upload preview, alongside whatever *is* being imported.
+const IMPORTED_SHEET_NAMES = new Set(['members details', 'ledger']);
+const OTHER_SHEET_ROW_CAP = 300;
+
+function extractOtherSheets(wb) {
+  return wb.SheetNames
+    .filter((name) => !IMPORTED_SHEET_NAMES.has(name))
+    .map((name) => {
+      const allRows = xlsx.utils.sheet_to_json(wb.Sheets[name], { header: 1, defval: '' });
+      return {
+        name,
+        totalRows: allRows.length,
+        rows: allRows.slice(0, OTHER_SHEET_ROW_CAP),
+        truncated: allRows.length > OTHER_SHEET_ROW_CAP
+      };
+    });
+}
+
 export function parseSocietyWorkbook(buffer) {
   const wb = xlsx.read(buffer, { type: 'buffer' });
   const issues = [];
+  const otherSheets = extractOtherSheets(wb);
 
   const membersSheet = wb.Sheets['members details'];
   const ledgerSheet = wb.Sheets['ledger'];
@@ -182,5 +205,5 @@ export function parseSocietyWorkbook(buffer) {
     issues.push(`${orphanMembers.length} LF No(s) appear in the ledger but not in "members details" (likely former/exited members): ${orphanMembers.map((o) => `${o.staffNo} (${o.name})`).join(', ')}`);
   }
 
-  return { members, receipts, orphanMembers, issues };
+  return { members, receipts, orphanMembers, issues, otherSheets };
 }

@@ -102,6 +102,7 @@ export default function App() {
   const [societyImporting, setSocietyImporting] = useState(false);
   const [societyImportResult, setSocietyImportResult] = useState(null);
   const [societyError, setSocietyError] = useState('');
+  const [selectedOtherSheet, setSelectedOtherSheet] = useState(0);
 
   // AI-Assisted Parsing (Claude) State
   const [aiStatus, setAiStatus] = useState({ configured: false, model: '', enabled: false });
@@ -693,6 +694,7 @@ export default function App() {
       const data = await res.json();
       if (res.ok) {
         setSocietyPreview(data);
+        setSelectedOtherSheet(0);
       } else {
         setSocietyError(data.error || 'Failed to preview file.');
       }
@@ -1937,6 +1939,63 @@ export default function App() {
                           >
                             {societyImporting ? 'Importing...' : 'Confirm & Import'}
                           </button>
+                        </div>
+                      )}
+
+                      {/* Raw view of the workbook's other sheets (e.g. "Bank pass-book", "Loan details")
+                          — these are intentionally never parsed/imported, but the admin still needs a
+                          way to look at what's in them. */}
+                      {societyPreview && societyPreview.otherSheets && societyPreview.otherSheets.length > 0 && (
+                        <div style={{ marginBottom: '16px' }}>
+                          <strong style={{ fontSize: '13px', display: 'block', marginBottom: '8px' }}>
+                            Other sheets in this workbook (view only — not imported)
+                          </strong>
+                          <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', marginBottom: '10px' }}>
+                            {societyPreview.otherSheets.map((sheet, idx) => (
+                              <button
+                                key={sheet.name}
+                                type="button"
+                                className={idx === selectedOtherSheet ? 'btn-primary' : 'btn-secondary'}
+                                style={{ fontSize: '12px', padding: '6px 12px' }}
+                                onClick={() => setSelectedOtherSheet(idx)}
+                              >
+                                {sheet.name} ({sheet.totalRows})
+                              </button>
+                            ))}
+                          </div>
+                          {societyPreview.otherSheets[selectedOtherSheet] && (
+                            <div>
+                              {societyPreview.otherSheets[selectedOtherSheet].truncated && (
+                                <div style={{ fontSize: '12px', color: 'var(--accent-gold)', marginBottom: '8px' }}>
+                                  Showing first {societyPreview.otherSheets[selectedOtherSheet].rows.length} of {societyPreview.otherSheets[selectedOtherSheet].totalRows} rows.
+                                </div>
+                              )}
+                              <div style={{ maxHeight: '400px', overflow: 'auto', border: '1px solid var(--surface-border)', borderRadius: '8px' }}>
+                                <table style={{ borderCollapse: 'collapse', width: '100%', fontSize: '12px' }}>
+                                  <tbody>
+                                    {societyPreview.otherSheets[selectedOtherSheet].rows.map((row, rIdx) => (
+                                      <tr key={rIdx}>
+                                        {row.map((cell, cIdx) => (
+                                          <td
+                                            key={cIdx}
+                                            style={{
+                                              padding: '4px 8px',
+                                              borderBottom: '1px solid var(--surface-border)',
+                                              borderRight: '1px solid var(--surface-border)',
+                                              whiteSpace: 'nowrap',
+                                              color: 'var(--text-secondary)'
+                                            }}
+                                          >
+                                            {String(cell)}
+                                          </td>
+                                        ))}
+                                      </tr>
+                                    ))}
+                                  </tbody>
+                                </table>
+                              </div>
+                            </div>
+                          )}
                         </div>
                       )}
 
