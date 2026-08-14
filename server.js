@@ -180,6 +180,33 @@ app.get('/api/members/:staff_no/summary', async (req, res) => {
   }
 });
 
+// Full member ledger lookup (loans + complete receipt history) by Staff/
+// HRMS No., phone, or name — same resolution as the receipt search, but
+// returns everything on file for that member instead of a single month.
+app.get('/api/members/lookup', async (req, res) => {
+  const { identifier } = req.query;
+  if (!identifier) {
+    return res.status(400).json({ error: 'Missing required parameter: identifier.' });
+  }
+  try {
+    const candidates = await findMembersByIdentifier(identifier);
+    if (candidates.length === 0) {
+      return res.status(404).json({ error: 'No member found matching that Staff/HRMS No., phone number, or name.' });
+    }
+    if (candidates.length > 1) {
+      return res.status(409).json({
+        error: `"${identifier}" matches ${candidates.length} members — select yours below.`,
+        multipleMatches: true,
+        matches: candidates.map((m) => ({ staffNo: m.staff_no, name: m.name }))
+      });
+    }
+    const summary = await getMemberSummary(candidates[0].staff_no);
+    res.json(summary);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // 4. Get Backups List
 app.get('/api/backups', async (req, res) => {
   try {

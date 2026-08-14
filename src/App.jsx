@@ -78,6 +78,16 @@ export default function App() {
   const [searchSuggestions, setSearchSuggestions] = useState([]);
   const [showSuggestions, setShowSuggestions] = useState(false);
 
+  // Member Portal sub-tab + Ledger Details State
+  const [memberPortalTab, setMemberPortalTab] = useState('receipts'); // 'receipts' | 'ledger'
+  const [ledgerSearchInput, setLedgerSearchInput] = useState('');
+  const [ledgerResult, setLedgerResult] = useState(null);
+  const [ledgerError, setLedgerError] = useState('');
+  const [ledgerMultipleMatches, setLedgerMultipleMatches] = useState(null);
+  const [ledgerLoading, setLedgerLoading] = useState(false);
+  const [ledgerSuggestions, setLedgerSuggestions] = useState([]);
+  const [showLedgerSuggestions, setShowLedgerSuggestions] = useState(false);
+
   // Admin Data Upload State
   const [uploadFile, setUploadFile] = useState(null);
   const [uploadLoading, setUploadLoading] = useState(false);
@@ -169,6 +179,24 @@ export default function App() {
     }, 300);
     return () => clearTimeout(handle);
   }, [searchStaffNo]);
+
+  // Same live autocomplete, for the Ledger Details search box.
+  useEffect(() => {
+    if (!ledgerSearchInput || ledgerSearchInput.trim().length < 2) {
+      setLedgerSuggestions([]);
+      return;
+    }
+    const handle = setTimeout(async () => {
+      try {
+        const res = await fetch(`/api/members/search?q=${encodeURIComponent(ledgerSearchInput)}`);
+        const data = await res.json();
+        if (res.ok) setLedgerSuggestions(data);
+      } catch (err) {
+        // Live suggestions are a convenience — fail silently.
+      }
+    }, 300);
+    return () => clearTimeout(handle);
+  }, [ledgerSearchInput]);
 
   const fetchSettings = async () => {
     try {
@@ -518,6 +546,46 @@ export default function App() {
     setSearchSuggestions([]);
     setShowSuggestions(false);
     handleReceiptSearch(null, staffNo);
+  };
+
+  // Full ledger/loan history lookup — same identifier resolution as
+  // receipt search (Staff/HRMS No., phone, or name), but fetches
+  // everything on file for that member via /api/members/lookup.
+  const handleLedgerSearch = async (e, overrideIdentifier) => {
+    if (e && e.preventDefault) e.preventDefault();
+    const identifier = overrideIdentifier || ledgerSearchInput;
+    if (!identifier) {
+      setLedgerError('Please enter a Staff/HRMS No., phone, or name.');
+      return;
+    }
+    setLedgerLoading(true);
+    setLedgerError('');
+    setLedgerResult(null);
+    setLedgerMultipleMatches(null);
+
+    try {
+      const res = await fetch(`/api/members/lookup?identifier=${encodeURIComponent(identifier)}`);
+      const data = await res.json();
+      if (res.ok) {
+        setLedgerResult(data);
+      } else if (data.multipleMatches) {
+        setLedgerMultipleMatches(data.matches);
+        setLedgerError(data.error);
+      } else {
+        setLedgerError(data.error || 'No member found.');
+      }
+    } catch (err) {
+      setLedgerError('Network error searching for member.');
+    } finally {
+      setLedgerLoading(false);
+    }
+  };
+
+  const handleSelectLedgerMatch = (staffNo) => {
+    setLedgerSearchInput(staffNo);
+    setLedgerSuggestions([]);
+    setShowLedgerSuggestions(false);
+    handleLedgerSearch(null, staffNo);
   };
 
   // Opens WhatsApp (app or web) with the receipt pre-filled as a message.
@@ -1113,19 +1181,43 @@ export default function App() {
         {/* 2. MEMBER PORTAL                     */}
         {/* ==================================== */}
         {activeTab === 'member' && (
-          <div style={{ maxWidth: '800px', margin: '0 auto' }}>
-            
+          <div style={{ maxWidth: '900px', margin: '0 auto' }}>
+
             {/* Page Header */}
-            <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '24px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '16px' }}>
               <div style={{ background: 'rgba(59, 130, 246, 0.1)', color: 'var(--primary)', padding: '10px', borderRadius: '10px' }}>
                 <Search size={24} />
               </div>
               <div>
-                <h2 style={{ fontSize: '28px', color: 'var(--text-primary)' }}>Member Recovery Receipts</h2>
-                <p style={{ color: 'var(--text-secondary)' }}>Access and print your monthly society recovery receipt</p>
+                <h2 style={{ fontSize: '28px', color: 'var(--text-primary)' }}>
+                  {memberPortalTab === 'ledger' ? 'Member Ledger Details' : 'Member Recovery Receipts'}
+                </h2>
+                <p style={{ color: 'var(--text-secondary)' }}>
+                  {memberPortalTab === 'ledger' ? 'View a member\'s full loan and payment history' : 'Access and print your monthly society recovery receipt'}
+                </p>
               </div>
             </div>
 
+            {/* Member Portal Sub-Navigation */}
+            <div style={{ display: 'flex', gap: '8px', marginBottom: '24px' }}>
+              <button
+                className={`btn-secondary ${memberPortalTab === 'receipts' ? 'active-nav-btn' : ''}`}
+                style={{ fontSize: '13px', padding: '8px 16px', ...(memberPortalTab === 'receipts' ? { borderBottom: '2px solid var(--primary)', borderRadius: '8px 8px 0 0' } : {}) }}
+                onClick={() => setMemberPortalTab('receipts')}
+              >
+                Recovery Receipts
+              </button>
+              <button
+                className={`btn-secondary ${memberPortalTab === 'ledger' ? 'active-nav-btn' : ''}`}
+                style={{ fontSize: '13px', padding: '8px 16px', ...(memberPortalTab === 'ledger' ? { borderBottom: '2px solid var(--primary)', borderRadius: '8px 8px 0 0' } : {}) }}
+                onClick={() => setMemberPortalTab('ledger')}
+              >
+                Ledger Details
+              </button>
+            </div>
+
+            {memberPortalTab === 'receipts' && (
+            <>
             {/* Receipt Search Form */}
             <div className="glass-panel" style={{ padding: '24px', marginBottom: '24px' }}>
               <form onSubmit={handleReceiptSearch} style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
@@ -1364,6 +1456,164 @@ export default function App() {
                 )}
 
               </div>
+            )}
+            </>
+            )}
+
+            {memberPortalTab === 'ledger' && (
+            <>
+            {/* Ledger Search Form */}
+            <div className="glass-panel" style={{ padding: '24px', marginBottom: '24px' }}>
+              <form onSubmit={handleLedgerSearch} style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                <div style={{ position: 'relative', maxWidth: '400px' }}>
+                  <label style={{ fontSize: '13px', color: 'var(--text-secondary)', display: 'block', marginBottom: '6px', fontWeight: '500' }}>
+                    Staff / HRMS No., Phone, or Name
+                  </label>
+                  <input
+                    type="text"
+                    placeholder="e.g. 1001, phone number, or name"
+                    className="form-input"
+                    value={ledgerSearchInput}
+                    autoComplete="off"
+                    onChange={(e) => { setLedgerSearchInput(e.target.value); setShowLedgerSuggestions(true); }}
+                    onFocus={() => setShowLedgerSuggestions(true)}
+                    onBlur={() => setTimeout(() => setShowLedgerSuggestions(false), 150)}
+                  />
+                  {showLedgerSuggestions && ledgerSuggestions.length > 0 && (
+                    <div style={{ position: 'absolute', top: '100%', left: 0, right: 0, marginTop: '4px', background: '#fff', border: '1px solid var(--surface-border)', borderRadius: '8px', boxShadow: '0 10px 25px -5px rgba(0,0,0,0.15)', zIndex: 20, maxHeight: '220px', overflowY: 'auto' }}>
+                      {ledgerSuggestions.map((m) => (
+                        <button
+                          key={m.staffNo}
+                          type="button"
+                          onMouseDown={() => handleSelectLedgerMatch(m.staffNo)}
+                          style={{ display: 'flex', justifyContent: 'space-between', width: '100%', padding: '10px 12px', background: 'none', border: 'none', borderBottom: '1px solid var(--surface-border)', cursor: 'pointer', fontSize: '13px', textAlign: 'left', color: '#0f172a' }}
+                        >
+                          <span>{m.name}</span>
+                          <span style={{ color: 'var(--text-secondary)' }}>{m.staffNo}</span>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                {ledgerError && !ledgerMultipleMatches && (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px', background: 'rgba(239, 68, 68, 0.1)', border: '1px solid rgba(239, 68, 68, 0.2)', padding: '12px', borderRadius: '8px', color: 'var(--accent-red)' }}>
+                    <AlertTriangle size={16} />
+                    <span style={{ fontSize: '13px' }}>{ledgerError}</span>
+                  </div>
+                )}
+
+                {ledgerMultipleMatches && (
+                  <div style={{ background: 'rgba(59, 130, 246, 0.08)', border: '1px solid rgba(59, 130, 246, 0.2)', padding: '12px', borderRadius: '8px' }}>
+                    <span style={{ fontSize: '13px', color: 'var(--primary)', display: 'block', marginBottom: '8px' }}>{ledgerError}</span>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                      {ledgerMultipleMatches.map((m) => (
+                        <button
+                          key={m.staffNo}
+                          type="button"
+                          className="btn-secondary"
+                          style={{ fontSize: '13px', padding: '8px 12px', textAlign: 'left', justifyContent: 'space-between', display: 'flex' }}
+                          onClick={() => handleSelectLedgerMatch(m.staffNo)}
+                        >
+                          <span>{m.name}</span>
+                          <span style={{ color: 'var(--text-secondary)' }}>Staff/HRMS No. {m.staffNo}</span>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                <button type="submit" className="btn-primary" style={{ alignSelf: 'flex-start' }} disabled={ledgerLoading}>
+                  {ledgerLoading ? 'Searching...' : 'Search Ledger'}
+                </button>
+              </form>
+            </div>
+
+            {/* Ledger Result */}
+            {ledgerResult && (
+              <div className="glass-panel animate-fade-in" style={{ padding: '24px', marginBottom: '24px' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '12px', borderBottom: '1px solid var(--surface-border)', paddingBottom: '16px', marginBottom: '16px' }}>
+                  <div>
+                    <h3 style={{ fontSize: '18px' }}>{ledgerResult.member.name}</h3>
+                    <span style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>
+                      Staff/HRMS No. {ledgerResult.member.staff_no}{ledgerResult.member.phone ? ` • ${ledgerResult.member.phone}` : ''}
+                    </span>
+                  </div>
+                  {ledgerResult.member.savings_balance != null && (
+                    <div style={{ textAlign: 'right' }}>
+                      <span style={{ display: 'block', fontSize: '11px', color: 'var(--text-secondary)' }}>SAVINGS BALANCE</span>
+                      <strong style={{ fontSize: '15px' }}>₹{ledgerResult.member.savings_balance.toLocaleString()}</strong>
+                    </div>
+                  )}
+                </div>
+
+                {ledgerResult.loans.length === 0 ? (
+                  <p style={{ fontSize: '13px', color: 'var(--text-secondary)', marginBottom: '16px' }}>No loan on record for this member.</p>
+                ) : (
+                  ledgerResult.loans.map((loan) => (
+                    <div key={loan.id} style={{ background: 'rgba(59, 130, 246, 0.05)', border: '1px solid rgba(59, 130, 246, 0.15)', padding: '14px', borderRadius: '8px', marginBottom: '16px', display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: '12px' }}>
+                      <div>
+                        <span style={{ display: 'block', fontSize: '11px', color: 'var(--text-secondary)' }}>LOAN AMOUNT</span>
+                        <strong style={{ fontSize: '14px' }}>₹{loan.loan_amount.toLocaleString()}</strong>
+                      </div>
+                      <div>
+                        <span style={{ display: 'block', fontSize: '11px', color: 'var(--text-secondary)' }}>REMAINING BALANCE</span>
+                        <strong style={{ fontSize: '14px', color: 'var(--primary)' }}>₹{loan.remaining_balance.toLocaleString()}</strong>
+                      </div>
+                      {loan.guarantor1_name && (
+                        <div>
+                          <span style={{ display: 'block', fontSize: '11px', color: 'var(--text-secondary)' }}>GUARANTOR 1</span>
+                          <strong style={{ fontSize: '14px' }}>{loan.guarantor1_name}</strong>
+                        </div>
+                      )}
+                      {loan.guarantor2_name && (
+                        <div>
+                          <span style={{ display: 'block', fontSize: '11px', color: 'var(--text-secondary)' }}>GUARANTOR 2</span>
+                          <strong style={{ fontSize: '14px' }}>{loan.guarantor2_name}</strong>
+                        </div>
+                      )}
+                    </div>
+                  ))
+                )}
+
+                <h4 style={{ fontSize: '14px', color: 'var(--text-secondary)', marginBottom: '8px' }}>Payment History ({ledgerResult.receipts.length})</h4>
+                {ledgerResult.receipts.length === 0 ? (
+                  <p style={{ fontSize: '13px', color: 'var(--text-secondary)' }}>No receipts on file for this member.</p>
+                ) : (
+                  <div style={{ overflowX: 'auto' }}>
+                    <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
+                      <thead>
+                        <tr style={{ borderBottom: '2px solid var(--surface-border)', color: 'var(--text-secondary)', textAlign: 'left' }}>
+                          <th style={{ padding: '8px 6px' }}>Month</th>
+                          <th style={{ padding: '8px 6px' }}>Receipt No.</th>
+                          <th style={{ padding: '8px 6px', textAlign: 'right' }}>Savings</th>
+                          <th style={{ padding: '8px 6px', textAlign: 'right' }}>Installment</th>
+                          <th style={{ padding: '8px 6px', textAlign: 'right' }}>Interest</th>
+                          <th style={{ padding: '8px 6px', textAlign: 'right' }}>Total</th>
+                          <th style={{ padding: '8px 6px', textAlign: 'right' }}>Loan Balance</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {ledgerResult.receipts.map((r) => (
+                          <tr key={r.id} style={{ borderBottom: '1px solid var(--surface-border)' }}>
+                            <td style={{ padding: '8px 6px', fontWeight: '600' }}>{r.month}/{r.year}</td>
+                            <td style={{ padding: '8px 6px', color: 'var(--text-secondary)' }}>{r.receipt_no || '—'}</td>
+                            <td style={{ padding: '8px 6px', textAlign: 'right' }}>₹{r.savings_deposit.toLocaleString()}</td>
+                            <td style={{ padding: '8px 6px', textAlign: 'right' }}>₹{r.loan_recovery.toLocaleString()}</td>
+                            <td style={{ padding: '8px 6px', textAlign: 'right' }}>₹{r.interest_recovery.toLocaleString()}</td>
+                            <td style={{ padding: '8px 6px', textAlign: 'right', fontWeight: '600' }}>₹{r.total_recovered.toLocaleString()}</td>
+                            <td style={{ padding: '8px 6px', textAlign: 'right', color: 'var(--text-secondary)' }}>
+                              {r.loan_balance_after != null ? `₹${r.loan_balance_after.toLocaleString()}` : '—'}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+            )}
+            </>
             )}
 
           </div>
