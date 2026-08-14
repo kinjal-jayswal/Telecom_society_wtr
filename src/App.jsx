@@ -2062,7 +2062,7 @@ export default function App() {
       {/* --- FOOTER COPYRIGHT --- */}
       <footer className="glass-panel" style={{ margin: '24px', padding: '16px', textAlign: 'center', borderRadius: '12px' }}>
         <p style={{ fontSize: '13px', color: 'var(--text-secondary)', marginBottom: '8px' }}>
-          &copy; {new Date().getFullYear()} {settings.society_name || 'ATD Credit & Supply Co-Operative Society Limited'}. All Rights Reserved. Designed by V Tech & Redesigned for Antigravity AI.
+          &copy; {new Date().getFullYear()} {settings.society_name || 'ATD Credit & Supply Co-Operative Society Limited'}. All Rights Reserved. Designed and Developed by JK Data Lab.
         </p>
         <div style={{ display: 'flex', justifyContent: 'center', gap: '16px', fontSize: '11px' }}>
           <a href="#about-sec" style={{ color: 'var(--text-secondary)', textDecoration: 'none' }}>About</a>
