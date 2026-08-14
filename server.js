@@ -12,6 +12,7 @@ import pdf from 'pdf-parse';
 import { 
   initDatabase,
   getMembers,
+  memberHasLoan,
   searchReceipt,
   findMembersByIdentifier,
   getMemberSummary,
@@ -419,30 +420,87 @@ app.delete('/api/board/:id', async (req, res) => {
 // actual cheque/online receipt number) when uploading more than one
 // transaction for the same member/month across separate uploads (they
 // add up instead of overwriting each other when receipt_no differs).
+//
+// ?category=savings|salary|other|general selects which of the society's
+// three real monthly files this is a template for — each gets its own
+// example rows (pulled from real members so the numbers/names aren't
+// obviously fake) with the appropriate columns pre-filled and receipt_no
+// convention already applied.
 const TEMPLATE_HEADERS = ['staff_no', 'name', 'year', 'month', 'savings_deposit', 'loan_recovery', 'interest_recovery', 'receipt_no'];
-const TEMPLATE_EXAMPLE_ROWS = [
-  ['1001', 'Mahendrakumar Solanki', '2026', '07', '2500', '0', '0', 'SAVINGS'],
-  ['1001', 'Mahendrakumar Solanki', '2026', '07', '0', '8000', '2000', 'SALARY'],
-  ['1001', 'Mahendrakumar Solanki', '2026', '07', '0', '3000', '0', 'CHQ-4521']
-];
 
-app.get('/api/upload-data/template', (req, res) => {
-  const format = (req.query.format || 'csv').toLowerCase();
+async function buildTemplateExampleRows(category) {
+  const year = String(new Date().getFullYear());
+  const month = String(new Date().getMonth() + 1).padStart(2, '0');
 
-  if (format === 'xlsx') {
-    const worksheet = xlsx.utils.aoa_to_sheet([TEMPLATE_HEADERS, ...TEMPLATE_EXAMPLE_ROWS]);
-    const workbook = xlsx.utils.book_new();
-    xlsx.utils.book_append_sheet(workbook, worksheet, 'Template');
-    const buffer = xlsx.write(workbook, { type: 'buffer', bookType: 'xlsx' });
-    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
-    res.setHeader('Content-Disposition', 'attachment; filename=society_upload_template.xlsx');
-    return res.send(buffer);
+  if (category === 'general') {
+    return [
+      ['1001', 'Mahendrakumar Solanki', year, month, '2500', '0', '0', 'SAVINGS'],
+      ['1001', 'Mahendrakumar Solanki', year, month, '0', '8000', '2000', 'SALARY'],
+      ['1001', 'Mahendrakumar Solanki', year, month, '0', '3000', '0', 'CHQ-4521']
+    ];
   }
 
-  const csvText = [TEMPLATE_HEADERS, ...TEMPLATE_EXAMPLE_ROWS].map((row) => row.join(',')).join('\n');
-  res.setHeader('Content-Type', 'text/csv');
-  res.setHeader('Content-Disposition', 'attachment; filename=society_upload_template.csv');
-  res.send(csvText);
+  // Real members give the office an unambiguous, correctly-formatted
+  // example instead of an obviously-fake placeholder row.
+  const allMembers = await getMembers();
+  const membersWithLoans = [];
+  for (const m of allMembers) {
+    if (membersWithLoans.length >= 3) break;
+    if (await memberHasLoan(m.id)) membersWithLoans.push(m);
+  }
+  const sampleMembers = allMembers.slice(0, 4);
+  const loanMembers = membersWithLoans.length > 0 ? membersWithLoans : sampleMembers.slice(0, 3);
+
+  if (category === 'salary') {
+    return loanMembers.map((m, i) => [
+      m.staff_no, m.name, year, month, '0', String(10000 + i * 2000), String(1500 + i * 300), 'SALARY'
+    ]);
+  }
+
+  if (category === 'other') {
+    return loanMembers.map((m, i) => [
+      m.staff_no, m.name, year, month, '0', String(4000 + i * 1000), String(600 + i * 100), `CHQ-${4520 + i}`
+    ]);
+  }
+
+  // savings (default for the three-category set)
+  return sampleMembers.map((m, i) => [
+    m.staff_no, m.name, year, month, String(1500 + i * 250), '0', '0', 'SAVINGS'
+  ]);
+}
+
+const TEMPLATE_FILENAMES = {
+  savings: 'society_upload_template_savings',
+  salary: 'society_upload_template_salary_loan_recovery',
+  other: 'society_upload_template_other_loan_recovery',
+  general: 'society_upload_template'
+};
+
+app.get('/api/upload-data/template', async (req, res) => {
+  const format = (req.query.format || 'csv').toLowerCase();
+  const category = ['savings', 'salary', 'other', 'general'].includes(req.query.category) ? req.query.category : 'general';
+  const filenameBase = TEMPLATE_FILENAMES[category];
+
+  try {
+    const exampleRows = await buildTemplateExampleRows(category);
+
+    if (format === 'xlsx') {
+      const worksheet = xlsx.utils.aoa_to_sheet([TEMPLATE_HEADERS, ...exampleRows]);
+      const workbook = xlsx.utils.book_new();
+      xlsx.utils.book_append_sheet(workbook, worksheet, 'Template');
+      const buffer = xlsx.write(workbook, { type: 'buffer', bookType: 'xlsx' });
+      res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+      res.setHeader('Content-Disposition', `attachment; filename=${filenameBase}.xlsx`);
+      return res.send(buffer);
+    }
+
+    const csvText = [TEMPLATE_HEADERS, ...exampleRows].map((row) => row.join(',')).join('\n');
+    res.setHeader('Content-Type', 'text/csv');
+    res.setHeader('Content-Disposition', `attachment; filename=${filenameBase}.csv`);
+    res.send(csvText);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 // Imports the specific "members details" + "ledger" workbook format ATD

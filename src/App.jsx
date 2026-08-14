@@ -1737,14 +1737,26 @@ export default function App() {
                           Monthly entries: for regular savings, salary-deducted loan repayments, and other-method (cheque/online) repayments, upload each as its own row with a distinct <code>receipt_no</code> (e.g. "SAVINGS", "SALARY", or the actual receipt number) — they'll add up instead of overwriting each other. Loan repayments automatically reduce that member's outstanding loan balance.
                         </p>
 
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '16px', background: 'rgba(0,0,0,0.02)', border: '1px solid var(--surface-border)', borderRadius: '8px', padding: '10px 14px' }}>
-                          <span style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>Not sure of the format?</span>
-                          <a href="/api/upload-data/template?format=csv" download style={{ fontSize: '12px', fontWeight: '600', color: 'var(--primary)', display: 'inline-flex', alignItems: 'center', gap: '4px', textDecoration: 'none' }}>
-                            <Download size={12} /> CSV Template
-                          </a>
-                          <a href="/api/upload-data/template?format=xlsx" download style={{ fontSize: '12px', fontWeight: '600', color: 'var(--primary)', display: 'inline-flex', alignItems: 'center', gap: '4px', textDecoration: 'none' }}>
-                            <Download size={12} /> XLSX Template
-                          </a>
+                        <div style={{ marginBottom: '16px', background: 'rgba(0,0,0,0.02)', border: '1px solid var(--surface-border)', borderRadius: '8px', padding: '12px 14px' }}>
+                          <span style={{ fontSize: '12px', color: 'var(--text-secondary)', display: 'block', marginBottom: '8px' }}>Monthly upload templates — pre-filled with real member examples for each of the three entry types:</span>
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                            {[
+                              { key: 'savings', label: '1. Savings' },
+                              { key: 'salary', label: '2. Salary-deducted loan recovery' },
+                              { key: 'other', label: '3. Other-than-salary loan recovery' },
+                              { key: 'general', label: 'Generic (blank example)' }
+                            ].map((t) => (
+                              <div key={t.key} style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
+                                <span style={{ fontSize: '12px', minWidth: '220px' }}>{t.label}</span>
+                                <a href={`/api/upload-data/template?format=csv&category=${t.key}`} download style={{ fontSize: '12px', fontWeight: '600', color: 'var(--primary)', display: 'inline-flex', alignItems: 'center', gap: '4px', textDecoration: 'none' }}>
+                                  <Download size={12} /> CSV
+                                </a>
+                                <a href={`/api/upload-data/template?format=xlsx&category=${t.key}`} download style={{ fontSize: '12px', fontWeight: '600', color: 'var(--primary)', display: 'inline-flex', alignItems: 'center', gap: '4px', textDecoration: 'none' }}>
+                                  <Download size={12} /> XLSX
+                                </a>
+                              </div>
+                            ))}
+                          </div>
                         </div>
 
                         <form onSubmit={handleFileUpload} style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>

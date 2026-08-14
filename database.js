@@ -364,6 +364,11 @@ export async function getMembers() {
   return query("SELECT * FROM members ORDER BY name ASC");
 }
 
+export async function memberHasLoan(memberId) {
+  const loan = await get("SELECT id FROM loans WHERE member_id = $1 LIMIT 1", [memberId]);
+  return !!loan;
+}
+
 // A member can have multiple transaction rows in the same month (e.g.
 // savings + a salary-deducted loan repayment + a separate cheque/online
 // repayment, each uploaded independently — see importRecords()). The
