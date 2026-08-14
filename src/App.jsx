@@ -103,6 +103,11 @@ export default function App() {
   const [societyImportResult, setSocietyImportResult] = useState(null);
   const [societyError, setSocietyError] = useState('');
   const [selectedOtherSheet, setSelectedOtherSheet] = useState(0);
+  // Sheets like "Bank pass-book" are never written to the database (see
+  // CLAUDE.md), so this is the only place they're ever visible — kept
+  // separate from societyPreview so it survives "Confirm & Import" clearing
+  // the preview, instead of vanishing the moment the import succeeds.
+  const [otherSheetsSnapshot, setOtherSheetsSnapshot] = useState(null);
 
   // AI-Assisted Parsing (Claude) State
   const [aiStatus, setAiStatus] = useState({ configured: false, model: '', enabled: false });
@@ -695,6 +700,7 @@ export default function App() {
       if (res.ok) {
         setSocietyPreview(data);
         setSelectedOtherSheet(0);
+        setOtherSheetsSnapshot(data.otherSheets || null);
       } else {
         setSocietyError(data.error || 'Failed to preview file.');
       }
@@ -1893,7 +1899,7 @@ export default function App() {
                         <input
                           type="file"
                           accept=".xlsx,.xls"
-                          onChange={(e) => { setSocietyFile(e.target.files[0]); setSocietyPreview(null); setSocietyImportResult(null); setSocietyError(''); }}
+                          onChange={(e) => { setSocietyFile(e.target.files[0]); setSocietyPreview(null); setSocietyImportResult(null); setSocietyError(''); setOtherSheetsSnapshot(null); }}
                           style={{ fontSize: '13px' }}
                         />
                         <button
@@ -1944,14 +1950,15 @@ export default function App() {
 
                       {/* Raw view of the workbook's other sheets (e.g. "Bank pass-book", "Loan details")
                           — these are intentionally never parsed/imported, but the admin still needs a
-                          way to look at what's in them. */}
-                      {societyPreview && societyPreview.otherSheets && societyPreview.otherSheets.length > 0 && (
+                          way to look at what's in them. Uses otherSheetsSnapshot (not societyPreview)
+                          so it stays visible even after "Confirm & Import" clears the preview. */}
+                      {otherSheetsSnapshot && otherSheetsSnapshot.length > 0 && (
                         <div style={{ marginBottom: '16px' }}>
                           <strong style={{ fontSize: '13px', display: 'block', marginBottom: '8px' }}>
                             Other sheets in this workbook (view only — not imported)
                           </strong>
                           <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', marginBottom: '10px' }}>
-                            {societyPreview.otherSheets.map((sheet, idx) => (
+                            {otherSheetsSnapshot.map((sheet, idx) => (
                               <button
                                 key={sheet.name}
                                 type="button"
@@ -1963,17 +1970,17 @@ export default function App() {
                               </button>
                             ))}
                           </div>
-                          {societyPreview.otherSheets[selectedOtherSheet] && (
+                          {otherSheetsSnapshot[selectedOtherSheet] && (
                             <div>
-                              {societyPreview.otherSheets[selectedOtherSheet].truncated && (
+                              {otherSheetsSnapshot[selectedOtherSheet].truncated && (
                                 <div style={{ fontSize: '12px', color: 'var(--accent-gold)', marginBottom: '8px' }}>
-                                  Showing first {societyPreview.otherSheets[selectedOtherSheet].rows.length} of {societyPreview.otherSheets[selectedOtherSheet].totalRows} rows.
+                                  Showing first {otherSheetsSnapshot[selectedOtherSheet].rows.length} of {otherSheetsSnapshot[selectedOtherSheet].totalRows} rows.
                                 </div>
                               )}
                               <div style={{ maxHeight: '400px', overflow: 'auto', border: '1px solid var(--surface-border)', borderRadius: '8px' }}>
                                 <table style={{ borderCollapse: 'collapse', width: '100%', fontSize: '12px' }}>
                                   <tbody>
-                                    {societyPreview.otherSheets[selectedOtherSheet].rows.map((row, rIdx) => (
+                                    {otherSheetsSnapshot[selectedOtherSheet].rows.map((row, rIdx) => (
                                       <tr key={rIdx}>
                                         {row.map((cell, cIdx) => (
                                           <td
