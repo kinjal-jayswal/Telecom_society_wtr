@@ -106,10 +106,30 @@ app.get('/api/receipts/search', async (req, res) => {
 
   try {
     const row = await searchReceipt(account, year, month);
-    if (!row) {
-      return res.status(404).json({ error: 'No recovery receipt found for the specified account, year, and month.' });
+    if (row) {
+      return res.json(row);
     }
-    res.json(row);
+
+    // No receipt for that month — check whether this member even has a
+    // loan at all, so "no loan" and "no receipt this month" aren't shown
+    // as the same generic error.
+    const summary = await getMemberSummary(account);
+    if (!summary) {
+      return res.status(404).json({ error: 'No member found with that Staff/HRMS No.' });
+    }
+    if (summary.loans.length === 0) {
+      return res.status(404).json({
+        error: 'This member has no loan on record — no recovery receipt applies.',
+        noLoan: true,
+        member: {
+          name: summary.member.name,
+          staff_no: summary.member.staff_no,
+          savings_balance: summary.member.savings_balance,
+          savings_balance_date: summary.member.savings_balance_date
+        }
+      });
+    }
+    return res.status(404).json({ error: 'No recovery receipt found for the specified account, year, and month.' });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

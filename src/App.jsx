@@ -72,6 +72,7 @@ export default function App() {
   const [searchMonth, setSearchMonth] = useState('07');
   const [searchResult, setSearchResult] = useState(null);
   const [searchError, setSearchError] = useState('');
+  const [searchNoLoanMember, setSearchNoLoanMember] = useState(null);
   const [searchLoading, setSearchLoading] = useState(false);
 
   // Admin Data Upload State
@@ -456,6 +457,7 @@ export default function App() {
     setSearchLoading(true);
     setSearchError('');
     setSearchResult(null);
+    setSearchNoLoanMember(null);
 
     try {
       const url = `/api/receipts/search?account=${encodeURIComponent(searchStaffNo)}&year=${searchYear}&month=${searchMonth}`;
@@ -464,6 +466,8 @@ export default function App() {
 
       if (res.ok) {
         setSearchResult(data);
+      } else if (data.noLoan) {
+        setSearchNoLoanMember(data.member);
       } else {
         setSearchError(data.error || 'No matching receipt found.');
       }
@@ -1152,6 +1156,21 @@ export default function App() {
                   </div>
                 )}
 
+                {searchNoLoanMember && (
+                  <div style={{ display: 'flex', alignItems: 'flex-start', gap: '8px', background: 'rgba(59, 130, 246, 0.08)', border: '1px solid rgba(59, 130, 246, 0.2)', padding: '12px', borderRadius: '8px', color: 'var(--primary)' }}>
+                    <AlertTriangle size={16} style={{ marginTop: '2px', flexShrink: 0 }} />
+                    <div style={{ fontSize: '13px' }}>
+                      <strong>No Loan</strong> — {searchNoLoanMember.name} (Staff/HRMS No. {searchNoLoanMember.staff_no}) has no loan on record, so there is no recovery receipt to show for any month.
+                      {searchNoLoanMember.savings_balance != null && (
+                        <div style={{ marginTop: '6px', color: 'var(--text-secondary)' }}>
+                          Savings balance on file: ₹{searchNoLoanMember.savings_balance.toLocaleString()}
+                          {searchNoLoanMember.savings_balance_date ? ` (as of ${searchNoLoanMember.savings_balance_date})` : ''}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
+
                 <button type="submit" className="btn-primary" style={{ alignSelf: 'flex-start' }} disabled={searchLoading}>
                   {searchLoading ? 'Searching...' : 'Search Receipt'}
                 </button>
@@ -1166,9 +1185,13 @@ export default function App() {
                 {/* Print Header */}
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '2px solid #0f172a', paddingBottom: '16px', marginBottom: '24px' }}>
                   <div>
-                    <h3 style={{ fontSize: '20px', fontWeight: '800', color: '#1e3a8a' }}>The Ahmedabad Telephone Employees'</h3>
-                    <h4 style={{ fontSize: '14px', fontWeight: '700', color: '#475569' }}>Co-Operative Credit & Supply Society Limited</h4>
-                    <span style={{ fontSize: '11px', color: '#64748b' }}>Central Telephone Exchange Building, Shahpur Road, Ahmedabad</span>
+                    <h3 style={{ fontSize: '20px', fontWeight: '800', color: '#1e3a8a' }}>
+                      {settings.society_name ? settings.society_name.split(' ').slice(0, 3).join(' ') : 'ATD Credit & Supply'}
+                    </h3>
+                    <h4 style={{ fontSize: '14px', fontWeight: '700', color: '#475569' }}>
+                      {settings.society_name ? settings.society_name.split(' ').slice(3).join(' ') : 'Co-Operative Society Limited'}
+                    </h4>
+                    <span style={{ fontSize: '11px', color: '#64748b' }}>{settings.address || 'Central Telephone Exchange Building, Shahpur Road, Ahmedabad'}</span>
                   </div>
                   <div style={{ textAlign: 'right' }}>
                     <h2 style={{ fontSize: '20px', fontWeight: '800', tracking: '0.05em' }}>RECOVERY RECEIPT</h2>
