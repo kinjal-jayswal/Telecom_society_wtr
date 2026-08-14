@@ -1731,7 +1731,10 @@ export default function App() {
                         </div>
 
                         <p style={{ fontSize: '13px', color: 'var(--text-secondary)', marginBottom: '16px' }}>
-                          Upload XLS, XLSX, CSV, or Text-formatted PDF sheets to insert or update member accounts. The parser maps columns: `staff_no`, `name`, `year`, `month`, `savings_deposit`, `loan_recovery`, `interest_recovery`.
+                          Upload XLS, XLSX, CSV, or Text-formatted PDF sheets to insert or update member accounts. Columns: `staff_no`, `name`, `year`, `month`, `savings_deposit`, `loan_recovery`, `interest_recovery`, `receipt_no`.
+                        </p>
+                        <p style={{ fontSize: '12px', color: 'var(--text-secondary)', marginBottom: '16px', background: 'rgba(0,0,0,0.02)', border: '1px solid var(--surface-border)', borderRadius: '8px', padding: '10px 14px' }}>
+                          Monthly entries: for regular savings, salary-deducted loan repayments, and other-method (cheque/online) repayments, upload each as its own row with a distinct <code>receipt_no</code> (e.g. "SAVINGS", "SALARY", or the actual receipt number) — they'll add up instead of overwriting each other. Loan repayments automatically reduce that member's outstanding loan balance.
                         </p>
 
                         <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '16px', background: 'rgba(0,0,0,0.02)', border: '1px solid var(--surface-border)', borderRadius: '8px', padding: '10px 14px' }}>

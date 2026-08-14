@@ -104,7 +104,7 @@ const SQLITE_SCHEMAS = [
     loan_balance_before REAL,
     loan_balance_after REAL,
     FOREIGN KEY (member_id) REFERENCES members(id) ON DELETE CASCADE,
-    UNIQUE(member_id, year, month)
+    UNIQUE(member_id, year, month, receipt_no)
   )`,
   `CREATE TABLE IF NOT EXISTS loans (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -172,7 +172,7 @@ const POSTGRES_SCHEMAS = [
     loan_balance_before DOUBLE PRECISION,
     loan_balance_after DOUBLE PRECISION,
     FOREIGN KEY (member_id) REFERENCES members(id) ON DELETE CASCADE,
-    UNIQUE(member_id, year, month)
+    UNIQUE(member_id, year, month, receipt_no)
   )`,
   `CREATE TABLE IF NOT EXISTS loans (
     id SERIAL PRIMARY KEY,
@@ -250,6 +250,58 @@ async function runMigrations() {
       // SQLite has no "ADD COLUMN IF NOT EXISTS" — ignore "duplicate column" on repeat runs
     }
   }
+
+  await migrateReceiptsUniqueConstraint();
+}
+
+// Widens the receipts table's uniqueness from (member_id, year, month) to
+// (member_id, year, month, receipt_no), so a member can have multiple
+// distinct transactions in the same month (e.g. savings, a salary-deducted
+// loan repayment, and a separate cheque/online repayment all in one
+// month) instead of the second/third upload silently overwriting the
+// first. searchReceipt() aggregates these into one total for the
+// "official receipt" view; getMemberSummary()/Ledger Details shows each
+// transaction individually. Existing data already has at most one row per
+// (member, year, month), so this widening can never conflict with it.
+async function migrateReceiptsUniqueConstraint() {
+  if (isPostgres) {
+    try {
+      await run('ALTER TABLE receipts DROP CONSTRAINT IF EXISTS receipts_member_id_year_month_key');
+      await run('ALTER TABLE receipts ADD CONSTRAINT receipts_member_id_year_month_receipt_no_key UNIQUE (member_id, year, month, receipt_no)');
+    } catch (err) {
+      // Already migrated (constraint with this definition already exists) — ignore
+    }
+    return;
+  }
+
+  // SQLite has no ALTER TABLE support for changing a UNIQUE constraint —
+  // rebuild the table. Guarded by inspecting the stored CREATE TABLE text
+  // so this only runs once.
+  const tableInfo = await get("SELECT sql FROM sqlite_master WHERE type='table' AND name='receipts'");
+  if (!tableInfo || !tableInfo.sql || tableInfo.sql.includes('UNIQUE(member_id, year, month, receipt_no)')) {
+    return; // already migrated, or table doesn't exist yet
+  }
+
+  await run(`CREATE TABLE receipts_new (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    member_id INTEGER NOT NULL,
+    year TEXT NOT NULL,
+    month TEXT NOT NULL,
+    total_recovered REAL NOT NULL,
+    savings_deposit REAL NOT NULL,
+    loan_recovery REAL NOT NULL,
+    interest_recovery REAL NOT NULL,
+    receipt_no TEXT,
+    loan_balance_before REAL,
+    loan_balance_after REAL,
+    FOREIGN KEY (member_id) REFERENCES members(id) ON DELETE CASCADE,
+    UNIQUE(member_id, year, month, receipt_no)
+  )`);
+  await run(`INSERT INTO receipts_new (id, member_id, year, month, total_recovered, savings_deposit, loan_recovery, interest_recovery, receipt_no, loan_balance_before, loan_balance_after)
+    SELECT id, member_id, year, month, total_recovered, savings_deposit, loan_recovery, interest_recovery, receipt_no, loan_balance_before, loan_balance_after FROM receipts`);
+  await run('DROP TABLE receipts');
+  await run('ALTER TABLE receipts_new RENAME TO receipts');
+  console.log('Migrated receipts table to the (member_id, year, month, receipt_no) unique constraint.');
 }
 
 // Seed initial data for testing
@@ -312,14 +364,43 @@ export async function getMembers() {
   return query("SELECT * FROM members ORDER BY name ASC");
 }
 
+// A member can have multiple transaction rows in the same month (e.g.
+// savings + a salary-deducted loan repayment + a separate cheque/online
+// repayment, each uploaded independently — see importRecords()). The
+// "official receipt" view aggregates all of that month's transactions
+// into one total here; Ledger Details (getMemberSummary) shows each one
+// individually via the raw receipts rows.
 export async function searchReceipt(staffNo, year, month) {
   const sql = `
-    SELECT r.*, m.name, m.staff_no, m.email, m.phone 
+    SELECT r.*, m.name, m.staff_no, m.email, m.phone
     FROM receipts r
     JOIN members m ON r.member_id = m.id
     WHERE m.staff_no = $1 AND r.year = $2 AND r.month = $3
+    ORDER BY r.id ASC
   `;
-  return get(sql, [staffNo, year, month]);
+  const rows = await query(sql, [staffNo, year, month]);
+  if (rows.length === 0) return null;
+  if (rows.length === 1) return rows[0];
+
+  const first = rows[0];
+  const last = rows[rows.length - 1];
+  return {
+    id: first.id,
+    member_id: first.member_id,
+    name: first.name,
+    staff_no: first.staff_no,
+    email: first.email,
+    phone: first.phone,
+    year: first.year,
+    month: first.month,
+    total_recovered: rows.reduce((sum, r) => sum + r.total_recovered, 0),
+    savings_deposit: rows.reduce((sum, r) => sum + r.savings_deposit, 0),
+    loan_recovery: rows.reduce((sum, r) => sum + r.loan_recovery, 0),
+    interest_recovery: rows.reduce((sum, r) => sum + r.interest_recovery, 0),
+    receipt_no: rows.map((r) => r.receipt_no).filter(Boolean).join(', ') || null,
+    loan_balance_before: first.loan_balance_before,
+    loan_balance_after: last.loan_balance_after
+  };
 }
 
 // Resolves a member from any of Staff/HRMS No., exact phone number, or a
@@ -519,6 +600,14 @@ export async function importRecords(records) {
     const loan = parseFloat(record.loanrecovery || record.loan_recovery || record.loan || 0);
     const interest = parseFloat(record.interestrecovery || record.interest_recovery || record.interest || 0);
     const total = savings + loan + interest;
+    // Optional: tags which of a month's possibly-several transactions this
+    // row is (e.g. "SAVINGS", "SALARY", or an actual cheque/online receipt
+    // number) so uploading e.g. savings and a separate loan repayment for
+    // the same member/month both land as distinct rows instead of one
+    // overwriting the other. Left blank, it defaults to '' (not null) so
+    // re-uploading without it still replaces the prior blank-tagged row,
+    // same as before this feature existed.
+    const receiptNo = String(record.receiptno || record.receipt_no || '').trim();
 
     if (!staffNo || !name || !year || !monthStr) {
       errors++;
@@ -530,7 +619,7 @@ export async function importRecords(records) {
       const memberInsertSql = isPostgres
         ? "INSERT INTO members (staff_no, name) VALUES ($1, $2) ON CONFLICT (staff_no) DO NOTHING"
         : "INSERT OR IGNORE INTO members (staff_no, name) VALUES ($1, $2)";
-      
+
       const mResult = await run(memberInsertSql, [staffNo, name]);
       if (mResult.changes > 0) {
         membersInserted++;
@@ -543,20 +632,46 @@ export async function importRecords(records) {
         continue;
       }
 
-      // 3. Insert/Replace receipt
+      // 3. Look up any existing row for this exact (member, year, month,
+      // receiptNo) *before* writing — needed so step 4 can tell a genuinely
+      // new transaction from a correction to one already accounted for.
+      const existingReceipt = await get(
+        "SELECT loan_recovery FROM receipts WHERE member_id = $1 AND year = $2 AND month = $3 AND receipt_no = $4",
+        [member.id, String(year), monthStr, receiptNo]
+      );
+      const previousLoanRecovery = existingReceipt ? existingReceipt.loan_recovery : 0;
+
+      // Insert/Replace receipt (replaces only if the same member/year/
+      // month/receiptNo combination was already uploaded — a different
+      // receiptNo creates a new transaction row instead of overwriting)
       const receiptInsertSql = isPostgres
-        ? `INSERT INTO receipts (member_id, year, month, total_recovered, savings_deposit, loan_recovery, interest_recovery)
-           VALUES ($1, $2, $3, $4, $5, $6, $7)
-           ON CONFLICT (member_id, year, month) DO UPDATE SET 
+        ? `INSERT INTO receipts (member_id, year, month, total_recovered, savings_deposit, loan_recovery, interest_recovery, receipt_no)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+           ON CONFLICT (member_id, year, month, receipt_no) DO UPDATE SET
              total_recovered = EXCLUDED.total_recovered,
              savings_deposit = EXCLUDED.savings_deposit,
              loan_recovery = EXCLUDED.loan_recovery,
              interest_recovery = EXCLUDED.interest_recovery`
-        : `INSERT OR REPLACE INTO receipts (member_id, year, month, total_recovered, savings_deposit, loan_recovery, interest_recovery)
-           VALUES ($1, $2, $3, $4, $5, $6, $7)`;
-      
-      await run(receiptInsertSql, [member.id, String(year), monthStr, total, savings, loan, interest]);
+        : `INSERT OR REPLACE INTO receipts (member_id, year, month, total_recovered, savings_deposit, loan_recovery, interest_recovery, receipt_no)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`;
+
+      await run(receiptInsertSql, [member.id, String(year), monthStr, total, savings, loan, interest, receiptNo]);
       receiptsInserted++;
+
+      // 4. A loan repayment amount reduces that member's current
+      // outstanding balance — but only by the DELTA versus whatever this
+      // exact row previously contributed, so re-uploading a correction
+      // doesn't double-deduct the amount it's replacing. If a member has
+      // more than one loan on record, this applies to the most recently
+      // created one — the standard upload template has no way to specify
+      // which loan a payment is for.
+      const loanDelta = loan - previousLoanRecovery;
+      if (loanDelta !== 0) {
+        const loanRow = await get("SELECT id FROM loans WHERE member_id = $1 ORDER BY id DESC LIMIT 1", [member.id]);
+        if (loanRow) {
+          await run("UPDATE loans SET remaining_balance = remaining_balance - $1 WHERE id = $2", [loanDelta, loanRow.id]);
+        }
+      }
     } catch (err) {
       console.error("Import record error:", err);
       errors++;
