@@ -73,6 +73,7 @@ export default function App() {
   const [searchResult, setSearchResult] = useState(null);
   const [searchError, setSearchError] = useState('');
   const [searchNoLoanMember, setSearchNoLoanMember] = useState(null);
+  const [searchMultipleMatches, setSearchMultipleMatches] = useState(null);
   const [searchLoading, setSearchLoading] = useState(false);
 
   // Admin Data Upload State
@@ -447,25 +448,33 @@ export default function App() {
     }
   };
 
-  // Fetch receipt details
-  const handleReceiptSearch = async (e) => {
-    e.preventDefault();
-    if (!searchStaffNo) {
-      setSearchError('Please enter your Staff/HRMS No.');
+  // Fetch receipt details. Accepts an optional identifier override so
+  // clicking a name in the disambiguation list (see handleSelectMatch) can
+  // re-search immediately without waiting on the async state update from
+  // setSearchStaffNo.
+  const handleReceiptSearch = async (e, overrideAccount) => {
+    if (e && e.preventDefault) e.preventDefault();
+    const account = overrideAccount || searchStaffNo;
+    if (!account) {
+      setSearchError('Please enter your Staff/HRMS No., phone, or name.');
       return;
     }
     setSearchLoading(true);
     setSearchError('');
     setSearchResult(null);
     setSearchNoLoanMember(null);
+    setSearchMultipleMatches(null);
 
     try {
-      const url = `/api/receipts/search?account=${encodeURIComponent(searchStaffNo)}&year=${searchYear}&month=${searchMonth}`;
+      const url = `/api/receipts/search?account=${encodeURIComponent(account)}&year=${searchYear}&month=${searchMonth}`;
       const res = await fetch(url);
       const data = await res.json();
 
       if (res.ok) {
         setSearchResult(data);
+      } else if (data.multipleMatches) {
+        setSearchMultipleMatches(data.matches);
+        setSearchError(data.error);
       } else if (data.noLoan) {
         setSearchNoLoanMember(data.member);
       } else {
@@ -476,6 +485,13 @@ export default function App() {
     } finally {
       setSearchLoading(false);
     }
+  };
+
+  // A member picked their name from the disambiguation list — lock the
+  // search field to their exact Staff/HRMS No. and re-search immediately.
+  const handleSelectMatch = (staffNo) => {
+    setSearchStaffNo(staffNo);
+    handleReceiptSearch(null, staffNo);
   };
 
   // Opens WhatsApp (app or web) with the receipt pre-filled as a message.
@@ -1079,7 +1095,7 @@ export default function App() {
                 <Search size={24} />
               </div>
               <div>
-                <h2 style={{ fontSize: '28px', color: '#fff' }}>Member Recovery Receipts</h2>
+                <h2 style={{ fontSize: '28px', color: 'var(--text-primary)' }}>Member Recovery Receipts</h2>
                 <p style={{ color: 'var(--text-secondary)' }}>Access and print your monthly society recovery receipt</p>
               </div>
             </div>
@@ -1090,14 +1106,14 @@ export default function App() {
                 
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '16px' }}>
                   
-                  {/* Staff Number */}
+                  {/* Staff Number / Phone / Name */}
                   <div>
                     <label style={{ fontSize: '13px', color: 'var(--text-secondary)', display: 'block', marginBottom: '6px', fontWeight: '500' }}>
-                      Staff / HRMS No.
+                      Staff / HRMS No., Phone, or Name
                     </label>
-                    <input 
-                      type="text" 
-                      placeholder="e.g. 1001" 
+                    <input
+                      type="text"
+                      placeholder="e.g. 1001, phone number, or name"
                       className="form-input"
                       value={searchStaffNo}
                       onChange={(e) => setSearchStaffNo(e.target.value)}
@@ -1149,10 +1165,30 @@ export default function App() {
 
                 </div>
 
-                {searchError && (
+                {searchError && !searchMultipleMatches && (
                   <div style={{ display: 'flex', alignItems: 'center', gap: '8px', background: 'rgba(239, 68, 68, 0.1)', border: '1px solid rgba(239, 68, 68, 0.2)', padding: '12px', borderRadius: '8px', color: 'var(--accent-red)' }}>
                     <AlertTriangle size={16} />
                     <span style={{ fontSize: '13px' }}>{searchError}</span>
+                  </div>
+                )}
+
+                {searchMultipleMatches && (
+                  <div style={{ background: 'rgba(59, 130, 246, 0.08)', border: '1px solid rgba(59, 130, 246, 0.2)', padding: '12px', borderRadius: '8px' }}>
+                    <span style={{ fontSize: '13px', color: 'var(--primary)', display: 'block', marginBottom: '8px' }}>{searchError}</span>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                      {searchMultipleMatches.map((m) => (
+                        <button
+                          key={m.staffNo}
+                          type="button"
+                          className="btn-secondary"
+                          style={{ fontSize: '13px', padding: '8px 12px', textAlign: 'left', justifyContent: 'space-between', display: 'flex' }}
+                          onClick={() => handleSelectMatch(m.staffNo)}
+                        >
+                          <span>{m.name}</span>
+                          <span style={{ color: 'var(--text-secondary)' }}>Staff/HRMS No. {m.staffNo}</span>
+                        </button>
+                      ))}
+                    </div>
                   </div>
                 )}
 
@@ -1349,7 +1385,7 @@ export default function App() {
                 {/* Header */}
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '16px', marginBottom: '24px' }}>
                   <div>
-                    <h2 style={{ fontSize: '28px', color: '#fff' }}>Society Admin Workspace</h2>
+                    <h2 style={{ fontSize: '28px', color: 'var(--text-primary)' }}>Society Admin Workspace</h2>
                     <p style={{ color: 'var(--text-secondary)' }}>Upload member statements and manage database backups</p>
                   </div>
                   <button className="btn-secondary" onClick={() => setAdminLoggedIn(false)}>

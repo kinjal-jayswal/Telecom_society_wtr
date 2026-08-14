@@ -10,10 +10,11 @@ import * as xlsx from 'xlsx';
 import pdf from 'pdf-parse';
 
 import { 
-  initDatabase, 
-  getMembers, 
-  searchReceipt, 
-  getMemberSummary, 
+  initDatabase,
+  getMembers,
+  searchReceipt,
+  findMembersByIdentifier,
+  getMemberSummary,
   saveSettings, 
   getSettings, 
   getBoardMembers, 
@@ -105,7 +106,24 @@ app.get('/api/receipts/search', async (req, res) => {
   }
 
   try {
-    const row = await searchReceipt(account, year, month);
+    // Members can search by Staff/HRMS No., phone number, or (part of)
+    // their name — findMembersByIdentifier() only auto-resolves when this
+    // is unambiguous, so a common name fragment never silently exposes a
+    // different member's data.
+    const candidates = await findMembersByIdentifier(account);
+    if (candidates.length === 0) {
+      return res.status(404).json({ error: 'No member found matching that Staff/HRMS No., phone number, or name.' });
+    }
+    if (candidates.length > 1) {
+      return res.status(409).json({
+        error: `"${account}" matches ${candidates.length} members — select yours below.`,
+        multipleMatches: true,
+        matches: candidates.map((m) => ({ staffNo: m.staff_no, name: m.name }))
+      });
+    }
+    const matchedMember = candidates[0];
+
+    const row = await searchReceipt(matchedMember.staff_no, year, month);
     if (row) {
       return res.json(row);
     }
@@ -113,7 +131,7 @@ app.get('/api/receipts/search', async (req, res) => {
     // No receipt for that month — check whether this member even has a
     // loan at all, so "no loan" and "no receipt this month" aren't shown
     // as the same generic error.
-    const summary = await getMemberSummary(account);
+    const summary = await getMemberSummary(matchedMember.staff_no);
     if (!summary) {
       return res.status(404).json({ error: 'No member found with that Staff/HRMS No.' });
     }

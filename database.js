@@ -322,6 +322,27 @@ export async function searchReceipt(staffNo, year, month) {
   return get(sql, [staffNo, year, month]);
 }
 
+// Resolves a member from any of Staff/HRMS No., exact phone number, or a
+// name fragment (e.g. imported names like "SHRI KIRTI A MAKWANA" — this
+// matches anywhere in the name, not just the start, so "KIRTI" still
+// works). Exact staff_no/phone matches always win outright since they're
+// unambiguous by construction; name matching can return 0, 1, or many —
+// callers must handle the "many" case explicitly rather than picking one,
+// since silently guessing could show one member's loan data to another.
+export async function findMembersByIdentifier(identifier) {
+  const trimmed = String(identifier || '').trim();
+  if (!trimmed) return [];
+
+  // Two placeholders (not $1 reused) — the SQLite path rewrites $n to
+  // positional "?" one-for-one against the params array, so reusing $1
+  // twice would need the same param twice anyway; being explicit here
+  // avoids relying on that rewrite behavior.
+  const exact = await query("SELECT * FROM members WHERE staff_no = $1 OR phone = $2", [trimmed, trimmed]);
+  if (exact.length > 0) return exact;
+
+  return query("SELECT * FROM members WHERE LOWER(name) LIKE LOWER($1)", [`%${trimmed}%`]);
+}
+
 export async function getMemberSummary(staffNo) {
   const member = await get("SELECT * FROM members WHERE staff_no = $1", [staffNo]);
   if (!member) return null;
